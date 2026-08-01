@@ -8,6 +8,8 @@ import os
 import re
 import time
 import subprocess
+import logging
+from datetime import datetime
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List
@@ -42,6 +44,24 @@ try:
     import html2text
 except ImportError:
     html2text = None
+
+
+def setup_logging():
+    """로깅 설정"""
+    log_dir = Path.home() / ".fsearch" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    log_file = log_dir / f"fsearch_{datetime.now().strftime('%Y%m%d')}.log"
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_file, encoding='utf-8'),
+            logging.StreamHandler()
+        ]
+    )
+    return logging.getLogger(__name__)
 
 
 class SearchResultDelegate(QStyledItemDelegate):
@@ -134,6 +154,7 @@ class SearchWorker(QThread):
     status = pyqtSignal(str)
     error = pyqtSignal(str)
     excluded_files_updated = pyqtSignal(list)  # 제외된 파일 목록 업데이트
+    file_processing = pyqtSignal(str)  # 현재 처리 중인 파일 이름
 
     def __init__(self, keyword, path, ignore_dirs, name_only, content_only, use_regex, max_workers):
         super().__init__()
@@ -326,6 +347,9 @@ class SearchWorker(QThread):
         """단일 파일 검색"""
         results = []
 
+        # 현재 처리 중인 파일 신호 전송
+        self.file_processing.emit(f"🔍 {file_path.name}")
+
         # 파일 정보 수집
         try:
             stat = file_path.stat()
@@ -470,6 +494,8 @@ class FSearchGUI(QMainWindow):
         self.search_worker = None
         self.results = []
         self.excluded_files = []  # 제외된 파일 목록
+        self.open_file_history = []  # 실행한 파일 목록
+        self.logger = setup_logging()  # 로깅 설정
         self.init_ui()
 
     def init_ui(self):
@@ -570,6 +596,11 @@ class FSearchGUI(QMainWindow):
         self.excluded_btn.clicked.connect(self.show_excluded_files)
         self.excluded_btn.setMaximumHeight(25)
         options2_layout.addWidget(self.excluded_btn)
+
+        self.opened_btn = QPushButton("✅ 실행된 파일")
+        self.opened_btn.clicked.connect(self.show_opened_files)
+        self.opened_btn.setMaximumHeight(25)
+        options2_layout.addWidget(self.opened_btn)
 
         options2_layout.addStretch()
         options2_container.setMaximumHeight(30)
@@ -702,6 +733,10 @@ class FSearchGUI(QMainWindow):
         self.search_worker.status.connect(self.update_status)
         self.search_worker.error.connect(self.search_error)
         self.search_worker.excluded_files_updated.connect(self.update_excluded_files)
+        self.search_worker.file_processing.connect(self.update_current_file)  # 현재 처리 중인 파일
+
+        # 로깅
+        self.logger.info(f"검색 시작 - 경로: {path}, 검색어: {keyword}")
 
         self.search_worker.start()
 
@@ -760,6 +795,10 @@ class FSearchGUI(QMainWindow):
     def update_status(self, status):
         """상태 메시지 업데이트"""
         self.status_label.setText(status)
+
+    def update_current_file(self, file_info):
+        """현재 처리 중인 파일 표시"""
+        self.status_label.setText(f"검색 중: {file_info}")
 
     def search_finished(self, results):
         """검색 완료"""
@@ -837,11 +876,16 @@ class FSearchGUI(QMainWindow):
 
         self.result_count.setText(f"결과: {len(results)}개 (파일: {len(file_counts)}개)")
 
+        # 로깅 - 검색 결과
+        self.logger.info(f"검색 완료 - 총 {len(results)}개 결과 (파일: {len(file_counts)}개)")
+
     def search_error(self, error):
         """검색 오류"""
         self.progress_bar.setVisible(False)
         QMessageBox.critical(self, "오류", error)
         self.status_label.setText("오류 발생")
+        # 로깅
+        self.logger.error(f"검색 오류: {error}")
 
     def refresh_cache(self):
         """캐시 새로고침"""
@@ -872,9 +916,25 @@ class FSearchGUI(QMainWindow):
             else:
                 subprocess.Popen(['xdg-open', file_path])
 
-            self.status_label.setText(f"✅ 파일 열음: {Path(file_path).name}")
+            filename = Path(file_path).name
+            self.status_label.setText(f"✅ 파일 열음: {filename}")
+
+            # 실행된 파일 기록
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            self.open_file_history.append({
+                'file': file_path,
+                'name': filename,
+                'timestamp': timestamp
+            })
+
+            # 로깅
+            self.logger.info(f"파일 실행 - {file_path}")
+
+            # 버튼 텍스트 업데이트
+            self.opened_btn.setText(f"✅ 실행된 파일 ({len(self.open_file_history)})")
         except Exception as e:
             QMessageBox.critical(self, "오류", f"파일을 열 수 없습니다:\n{str(e)}")
+            self.logger.error(f"파일 실행 오류 - {file_path}: {str(e)}")
 
     def update_excluded_files(self, excluded_files):
         """제외된 파일 목록 업데이트"""
@@ -908,6 +968,43 @@ class FSearchGUI(QMainWindow):
 
         excluded_text = "\n".join(self.excluded_files)
         text_edit.setText(excluded_text)
+        layout.addWidget(text_edit)
+
+        # 닫기 버튼
+        close_btn = QPushButton("닫기")
+        close_btn.clicked.connect(dialog.close)
+        layout.addWidget(close_btn)
+
+        dialog.exec_()
+
+    def show_opened_files(self):
+        """실행된 파일 목록 보기"""
+        if not self.open_file_history:
+            QMessageBox.information(self, "실행된 파일", "실행된 파일이 없습니다.\n\n검색 결과를 더블클릭해서 파일을 열어보세요.")
+            return
+
+        # 실행된 파일 목록을 보여주는 윈도우
+        from PyQt5.QtWidgets import QDialog
+        dialog = QDialog(self)
+        dialog.setWindowTitle("✅ 실행된 파일 목록")
+        dialog.setGeometry(200, 200, 800, 600)
+
+        layout = QVBoxLayout(dialog)
+
+        # 통계 정보
+        info_label = QLabel(f"총 {len(self.open_file_history)}개의 파일을 실행했습니다.")
+        layout.addWidget(info_label)
+
+        # 실행된 파일 목록
+        text_edit = QTextEdit()
+        text_edit.setReadOnly(True)
+        text_edit.setFont(QFont("Consolas", 9))
+
+        opened_text = ""
+        for i, item in enumerate(self.open_file_history, 1):
+            opened_text += f"{i}. [{item['timestamp']}] {item['file']}\n"
+
+        text_edit.setText(opened_text)
         layout.addWidget(text_edit)
 
         # 닫기 버튼
