@@ -256,6 +256,8 @@ class FSearchGUI(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
+        layout.setContentsMargins(5, 5, 5, 5)  # 마진 최소화
+        layout.setSpacing(3)  # 요소 간 간격 축소
 
         # ===== 검색 옵션 영역 =====
         options_layout = QHBoxLayout()
@@ -335,6 +337,8 @@ class FSearchGUI(QMainWindow):
         # 동적 크기 조정 설정
         self.table.horizontalHeader().setStretchLastSection(False)
         self.table.horizontalHeader().setSectionResizeMode(1, 1)  # 경로: 확장 가능
+        self.table.verticalHeader().setVisible(False)  # 행 번호 숨김
+        self.table.setSelectionBehavior(0)  # 행 선택 모드
         self.tabs.addTab(self.table, "🗂️ 결과 (테이블)")
 
         # 텍스트 탭
