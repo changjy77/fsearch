@@ -1022,10 +1022,11 @@ class FSearchGUI(QMainWindow):
 
         # 통계 정보
         current_keyword = getattr(self, 'current_keyword', '')
+        total_opened_files = len(self.open_file_history)
         if matched_opened_files:
-            info_label = QLabel(f"검색어 '{current_keyword}'를 찾기 위해 {len(matched_opened_files)}개의 파일을 실행했습니다.")
+            info_label = QLabel(f"검색어 '{current_keyword}'를 찾기 위해 {len(matched_opened_files)}개의 파일을 실행했습니다. (전체: {total_opened_files}개)")
         else:
-            info_label = QLabel(f"검색어 '{current_keyword}'와 관련된 실행 파일이 없습니다.")
+            info_label = QLabel(f"검색어 '{current_keyword}'와 관련된 실행 파일이 없습니다. (전체: {total_opened_files}개)")
         layout.addWidget(info_label)
 
         if matched_opened_files:
