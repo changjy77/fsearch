@@ -260,9 +260,6 @@ class SearchWorker(QThread):
 
         # 매칭이 있으면 파일당 하나의 결과만 추가
         if total_match_count > 0:
-            # 디버그 출력
-            print(f"[DEBUG] {filename}: 파일명 매칭={filename_matched}, 내용 매칭={content_match_count}, 합계={total_match_count}")
-
             results.append({
                 'type': 'file_summary',
                 'filename': filename_with_icon,
