@@ -1,0 +1,349 @@
+#!/usr/bin/env python3
+"""
+fsearch GUI - PyQt5 기반 파일 검색 도구
+"""
+
+import sys
+import os
+import re
+import time
+from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import List
+
+from PyQt5.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QLabel, QLineEdit, QPushButton, QTextEdit, QFileDialog, QCheckBox,
+    QSpinBox, QProgressBar, QComboBox, QTabWidget, QTableWidget, QTableWidgetItem,
+    QSplitter, QMessageBox
+)
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
+from PyQt5.QtGui import QIcon, QColor, QFont
+
+
+class SearchWorker(QThread):
+    """검색을 별도 스레드에서 실행"""
+    progress = pyqtSignal(int)
+    finished = pyqtSignal(list)
+    status = pyqtSignal(str)
+    error = pyqtSignal(str)
+
+    def __init__(self, keyword, path, ignore_dirs, name_only, content_only, use_regex, max_workers):
+        super().__init__()
+        self.keyword = keyword
+        self.path = path
+        self.ignore_dirs = set(ignore_dirs)
+        self.name_only = name_only
+        self.content_only = content_only
+        self.use_regex = use_regex
+        self.max_workers = max_workers
+        self.results = []
+
+    def run(self):
+        """검색 실행"""
+        try:
+            # 파일 수집
+            self.status.emit("📂 파일을 수집 중입니다...")
+            files = self._collect_files()
+
+            if not files:
+                self.status.emit("❌ 검색할 파일이 없습니다.")
+                self.finished.emit([])
+                return
+
+            self.status.emit(f"✅ {len(files)}개 파일 발견. 검색 중...")
+
+            # 정규식 컴파일
+            if self.use_regex:
+                try:
+                    regex = re.compile(self.keyword, re.IGNORECASE)
+                except re.error as e:
+                    self.error.emit(f"정규식 오류: {e}")
+                    return
+            else:
+                regex = None
+
+            # 병렬 검색
+            results = []
+            processed = 0
+
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                futures = {executor.submit(self._search_file, f, regex): f for f in files}
+
+                for future in as_completed(futures):
+                    try:
+                        results.extend(future.result())
+                    except:
+                        pass
+
+                    processed += 1
+                    self.progress.emit(int((processed / len(files)) * 100))
+
+            self.finished.emit(results)
+            self.status.emit(f"✅ 검색 완료: {len(results)}개 결과")
+
+        except Exception as e:
+            self.error.emit(f"오류 발생: {str(e)}")
+
+    def _collect_files(self) -> List[Path]:
+        """파일 수집"""
+        files = []
+        for root, dirs, filenames in os.walk(self.path):
+            dirs[:] = [d for d in dirs if d not in self.ignore_dirs]
+            for filename in filenames:
+                file_path = Path(root) / filename
+                files.append(file_path)
+        return files
+
+    def _search_file(self, file_path: Path, regex):
+        """단일 파일 검색"""
+        results = []
+
+        # 파일명 검색
+        if not self.content_only:
+            if self._match_keyword(file_path.name, regex):
+                results.append({
+                    'type': 'filename',
+                    'path': str(file_path),
+                    'line': None,
+                    'content': None
+                })
+
+        # 파일 내용 검색
+        if not self.name_only and not self._is_binary(file_path):
+            try:
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    for line_num, line in enumerate(f, 1):
+                        if self._match_keyword(line, regex):
+                            results.append({
+                                'type': 'content',
+                                'path': str(file_path),
+                                'line': line_num,
+                                'content': line.rstrip()[:100]
+                            })
+            except:
+                pass
+
+        return results
+
+    def _match_keyword(self, text: str, regex):
+        """키워드 매칭"""
+        if regex:
+            return regex.search(text) is not None
+        else:
+            return self.keyword.lower() in text.lower()
+
+    def _is_binary(self, path: Path) -> bool:
+        """바이너리 파일 확인"""
+        binary_exts = {'exe', 'dll', 'so', 'png', 'jpg', 'zip', 'db', 'pdf'}
+        return path.suffix.lower().lstrip('.') in binary_exts
+
+
+class FSearchGUI(QMainWindow):
+    """fsearch GUI 메인 윈도우"""
+
+    def __init__(self):
+        super().__init__()
+        self.search_worker = None
+        self.results = []
+        self.init_ui()
+
+    def init_ui(self):
+        """UI 초기화"""
+        self.setWindowTitle("🔍 fsearch - 파일 검색 도구")
+        self.setGeometry(100, 100, 1200, 800)
+
+        # 중앙 위젯
+        central = QWidget()
+        self.setCentralWidget(central)
+        layout = QVBoxLayout(central)
+
+        # ===== 검색 옵션 영역 =====
+        options_layout = QHBoxLayout()
+
+        # 경로 선택
+        options_layout.addWidget(QLabel("경로:"))
+        self.path_input = QLineEdit()
+        self.path_input.setText(str(Path.cwd()))
+        options_layout.addWidget(self.path_input)
+
+        browse_btn = QPushButton("찾아보기")
+        browse_btn.clicked.connect(self.browse_path)
+        options_layout.addWidget(browse_btn)
+
+        # 검색어
+        options_layout.addWidget(QLabel("검색:"))
+        self.keyword_input = QLineEdit()
+        self.keyword_input.setPlaceholderText("검색할 키워드 입력...")
+        self.keyword_input.returnPressed.connect(self.search)
+        options_layout.addWidget(self.keyword_input, 2)
+
+        search_btn = QPushButton("🔍 검색")
+        search_btn.clicked.connect(self.search)
+        options_layout.addWidget(search_btn)
+
+        layout.addLayout(options_layout)
+
+        # ===== 추가 옵션 영역 =====
+        options2_layout = QHBoxLayout()
+
+        self.name_only_cb = QCheckBox("파일명만")
+        self.content_only_cb = QCheckBox("내용만")
+        self.regex_cb = QCheckBox("정규식")
+
+        options2_layout.addWidget(self.name_only_cb)
+        options2_layout.addWidget(self.content_only_cb)
+        options2_layout.addWidget(self.regex_cb)
+
+        options2_layout.addWidget(QLabel("스레드:"))
+        self.workers_spin = QSpinBox()
+        self.workers_spin.setValue(8)
+        self.workers_spin.setMinimum(1)
+        self.workers_spin.setMaximum(16)
+        options2_layout.addWidget(self.workers_spin)
+
+        self.refresh_btn = QPushButton("🔄 새로고침")
+        self.refresh_btn.clicked.connect(self.refresh_cache)
+        options2_layout.addWidget(self.refresh_btn)
+
+        options2_layout.addStretch()
+
+        layout.addLayout(options2_layout)
+
+        # ===== 진행바 =====
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setMaximum(100)
+        self.progress_bar.setVisible(False)
+        layout.addWidget(self.progress_bar)
+
+        # ===== 상태 메시지 =====
+        self.status_label = QLabel("준비 완료")
+        layout.addWidget(self.status_label)
+
+        # ===== 탭: 결과 표시 =====
+        self.tabs = QTabWidget()
+
+        # 테이블 탭
+        self.table = QTableWidget()
+        self.table.setColumnCount(3)
+        self.table.setHorizontalHeaderLabels(["파일 경로", "줄", "내용"])
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.tabs.addTab(self.table, "🗂️ 결과 (테이블)")
+
+        # 텍스트 탭
+        self.text_output = QTextEdit()
+        self.text_output.setReadOnly(True)
+        font = QFont("Consolas")
+        font.setPointSize(9)
+        self.text_output.setFont(font)
+        self.tabs.addTab(self.text_output, "📋 결과 (텍스트)")
+
+        layout.addWidget(self.tabs, 1)
+
+        # ===== 푸터 =====
+        footer_layout = QHBoxLayout()
+        self.result_count = QLabel("결과: 0개")
+        footer_layout.addWidget(self.result_count)
+        footer_layout.addStretch()
+        footer_layout.addWidget(QLabel("fsearch v1.1 - GUI Edition"))
+        layout.addLayout(footer_layout)
+
+    def browse_path(self):
+        """폴더 선택 대화창"""
+        folder = QFileDialog.getExistingDirectory(self, "폴더 선택")
+        if folder:
+            self.path_input.setText(folder)
+
+    def search(self):
+        """검색 실행"""
+        keyword = self.keyword_input.text().strip()
+        if not keyword:
+            QMessageBox.warning(self, "입력 오류", "검색어를 입력하세요.")
+            return
+
+        path = self.path_input.text().strip()
+        if not Path(path).exists():
+            QMessageBox.warning(self, "경로 오류", "경로가 존재하지 않습니다.")
+            return
+
+        # 검색 시작
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setValue(0)
+        self.table.setRowCount(0)
+        self.text_output.clear()
+        self.results = []
+
+        ignore_dirs = {'.git', '__pycache__', 'node_modules', '.venv', 'venv'}
+
+        self.search_worker = SearchWorker(
+            keyword=keyword,
+            path=path,
+            ignore_dirs=list(ignore_dirs),
+            name_only=self.name_only_cb.isChecked(),
+            content_only=self.content_only_cb.isChecked(),
+            use_regex=self.regex_cb.isChecked(),
+            max_workers=self.workers_spin.value()
+        )
+
+        self.search_worker.progress.connect(self.update_progress)
+        self.search_worker.finished.connect(self.search_finished)
+        self.search_worker.status.connect(self.update_status)
+        self.search_worker.error.connect(self.search_error)
+
+        self.search_worker.start()
+
+    def update_progress(self, value):
+        """진행바 업데이트"""
+        self.progress_bar.setValue(value)
+
+    def update_status(self, status):
+        """상태 메시지 업데이트"""
+        self.status_label.setText(status)
+
+    def search_finished(self, results):
+        """검색 완료"""
+        self.results = results
+        self.progress_bar.setVisible(False)
+
+        # 테이블에 결과 표시
+        self.table.setRowCount(len(results))
+        text_output = "검색 결과:\n" + "="*80 + "\n\n"
+
+        for row, result in enumerate(results):
+            path_item = QTableWidgetItem(result['path'])
+            line_item = QTableWidgetItem(str(result['line']) if result['line'] else "-")
+            content_item = QTableWidgetItem(result['content'] or "")
+
+            self.table.setItem(row, 0, path_item)
+            self.table.setItem(row, 1, line_item)
+            self.table.setItem(row, 2, content_item)
+
+            # 텍스트 출력도 생성
+            if result['line']:
+                text_output += f"{result['path']}:{result['line']}\n  {result['content']}\n\n"
+            else:
+                text_output += f"{result['path']}\n\n"
+
+        self.text_output.setText(text_output)
+        self.result_count.setText(f"결과: {len(results)}개")
+
+    def search_error(self, error):
+        """검색 오류"""
+        self.progress_bar.setVisible(False)
+        QMessageBox.critical(self, "오류", error)
+        self.status_label.setText("오류 발생")
+
+    def refresh_cache(self):
+        """캐시 새로고침"""
+        QMessageBox.information(self, "캐시", "검색 시 파일 목록이 새로 수집됩니다.")
+
+
+def main():
+    app = QApplication(sys.argv)
+    window = FSearchGUI()
+    window.show()
+    sys.exit(app.exec_())
+
+
+if __name__ == '__main__':
+    main()
