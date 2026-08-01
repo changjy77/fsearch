@@ -343,14 +343,12 @@ class FSearchGUI(QMainWindow):
 
         # 테이블 탭
         self.table = QTableWidget()
-        self.table.setColumnCount(7)
+        self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels([
             "파일명",
             "경로",
-            "크기 (bytes)",
+            "크기",
             "수정 날짜",
-            "줄",
-            "내용",
             "검색 단어수"
         ])
         self.table.horizontalHeader().setStretchLastSection(True)
@@ -448,17 +446,13 @@ class FSearchGUI(QMainWindow):
         size_item.setToolTip(str(result['size']) + " bytes")
 
         modified_item = QTableWidgetItem(result['modified'])
-        line_item = QTableWidgetItem(str(result['line']) if result['line'] else "-")
-        content_item = QTableWidgetItem(result['content'] or "")
         match_count_item = QTableWidgetItem(str(result['match_count']))
 
         self.table.setItem(current_row_count, 0, filename_item)
         self.table.setItem(current_row_count, 1, path_item)
         self.table.setItem(current_row_count, 2, size_item)
         self.table.setItem(current_row_count, 3, modified_item)
-        self.table.setItem(current_row_count, 4, line_item)
-        self.table.setItem(current_row_count, 5, content_item)
-        self.table.setItem(current_row_count, 6, match_count_item)
+        self.table.setItem(current_row_count, 4, match_count_item)
 
     def update_status(self, status):
         """상태 메시지 업데이트"""
@@ -477,20 +471,27 @@ class FSearchGUI(QMainWindow):
 
         # 텍스트 탭 업데이트
         text_output = "검색 결과:\n" + "="*100 + "\n\n"
-        for result in results:
-            size = result['size']
-            if size < 1024:
-                size_str = f"{size} B"
-            elif size < 1024 * 1024:
-                size_str = f"{size / 1024:.1f} KB"
-            else:
-                size_str = f"{size / (1024 * 1024):.1f} MB"
+        shown_files = set()
 
-            if result['line']:
-                text_output += f"[{result['filename']}] 크기: {size_str}, 수정일: {result['modified']}\n"
-                text_output += f"  줄 {result['line']}: {result['content']}\n\n"
-            else:
-                text_output += f"[{result['filename']}] 크기: {size_str}, 수정일: {result['modified']}\n\n"
+        for result in results:
+            # 각 파일당 한 번씩만 정보 표시
+            file_path = result['full_path']
+            if file_path not in shown_files:
+                shown_files.add(file_path)
+
+                size = result['size']
+                if size < 1024:
+                    size_str = f"{size} B"
+                elif size < 1024 * 1024:
+                    size_str = f"{size / 1024:.1f} KB"
+                else:
+                    size_str = f"{size / (1024 * 1024):.1f} MB"
+
+                text_output += f"[{result['filename']}]\n"
+                text_output += f"  경로: {file_path}\n"
+                text_output += f"  크기: {size_str}\n"
+                text_output += f"  수정일: {result['modified']}\n"
+                text_output += f"  검색 단어수: {result['match_count']}\n\n"
 
         self.text_output.setText(text_output)
 
