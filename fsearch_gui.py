@@ -351,7 +351,9 @@ class FSearchGUI(QMainWindow):
             "수정 날짜",
             "검색 단어수"
         ])
-        self.table.horizontalHeader().setStretchLastSection(True)
+        # 동적 크기 조정 설정
+        self.table.horizontalHeader().setStretchLastSection(False)
+        self.table.horizontalHeader().setSectionResizeMode(1, 1)  # 경로: 확장 가능
         self.tabs.addTab(self.table, "🗂️ 결과 (테이블)")
 
         # 텍스트 탭
@@ -436,23 +438,37 @@ class FSearchGUI(QMainWindow):
             size_str = f"{size / (1024 * 1024):.1f} MB"
 
         # 각 컬럼에 데이터 입력
+        # 0: 파일명 (왼쪽 정렬)
         filename_item = QTableWidgetItem(result['filename'])
         filename_item.setToolTip(result['full_path'])
+        filename_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
+        # 1: 경로 (왼쪽 정렬)
         path_item = QTableWidgetItem(result['folder_path'])
         path_item.setToolTip(result['folder_path'])
+        path_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
+        # 2: 크기 (오른쪽 정렬 - 숫자)
         size_item = QTableWidgetItem(size_str)
         size_item.setToolTip(str(result['size']) + " bytes")
+        size_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
+        # 3: 수정 날짜 (왼쪽 정렬)
         modified_item = QTableWidgetItem(result['modified'])
+        modified_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+
+        # 4: 검색 단어수 (오른쪽 정렬 - 숫자)
         match_count_item = QTableWidgetItem(str(result['match_count']))
+        match_count_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
         self.table.setItem(current_row_count, 0, filename_item)
         self.table.setItem(current_row_count, 1, path_item)
         self.table.setItem(current_row_count, 2, size_item)
         self.table.setItem(current_row_count, 3, modified_item)
         self.table.setItem(current_row_count, 4, match_count_item)
+
+        # 컬럼 너비를 내용에 맞게 자동 조정
+        self.table.resizeColumnsToContents()
 
     def update_status(self, status):
         """상태 메시지 업데이트"""
