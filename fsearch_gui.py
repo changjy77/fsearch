@@ -410,37 +410,25 @@ class FSearchGUI(QMainWindow):
 
         # ===== 경로 제외 영역 =====
         exclude_container = QWidget()
-        exclude_layout = QVBoxLayout(exclude_container)
-        exclude_layout.setContentsMargins(0, 3, 0, 3)
-        exclude_layout.setSpacing(3)
+        self.exclude_layout = QHBoxLayout(exclude_container)
+        self.exclude_layout.setContentsMargins(0, 3, 0, 3)
+        self.exclude_layout.setSpacing(8)
 
-        # 제외 폴더 제목과 찾아보기 버튼
-        exclude_header_layout = QHBoxLayout()
         exclude_label = QLabel("제외 폴더:")
-        exclude_header_layout.addWidget(exclude_label)
+        self.exclude_layout.addWidget(exclude_label)
 
         add_exclude_btn = QPushButton("+ 폴더 추가")
         add_exclude_btn.clicked.connect(self.add_exclude_folder)
         add_exclude_btn.setMaximumHeight(25)
         add_exclude_btn.setMaximumWidth(100)
-        exclude_header_layout.addWidget(add_exclude_btn)
-        exclude_header_layout.addStretch()
+        self.exclude_layout.addWidget(add_exclude_btn)
 
-        exclude_layout.addLayout(exclude_header_layout)
-
-        # 제외 폴더 체크박스 영역
-        self.exclude_scroll = QWidget()
-        self.exclude_checkboxes_layout = QHBoxLayout(self.exclude_scroll)
-        self.exclude_checkboxes_layout.setContentsMargins(0, 0, 0, 0)
-        self.exclude_checkboxes_layout.setSpacing(5)
-
-        # 제외 폴더 저장소
+        # 제외 폴더 체크박스 저장소
         self.exclude_checkboxes = {}
 
-        self.exclude_checkboxes_layout.addStretch()
-        exclude_layout.addWidget(self.exclude_scroll)
+        self.exclude_layout.addStretch()
 
-        exclude_container.setMaximumHeight(60)
+        exclude_container.setMaximumHeight(30)
         layout.addWidget(exclude_container)
 
         # ===== 추가 옵션 영역 =====
@@ -550,8 +538,9 @@ class FSearchGUI(QMainWindow):
                 cb.setMaximumHeight(25)
                 cb.setToolTip(full_path)  # 전체 경로를 툴팁으로 표시
 
-                self.exclude_checkboxes_layout.insertWidget(
-                    self.exclude_checkboxes_layout.count() - 1, cb
+                # stretch 위젯 전에 체크박스 추가
+                self.exclude_layout.insertWidget(
+                    self.exclude_layout.count() - 1, cb
                 )
                 self.exclude_checkboxes[full_path] = cb
 
