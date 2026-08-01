@@ -730,11 +730,6 @@ class FSearchGUI(QMainWindow):
         self.table.setItem(current_row_count, 3, modified_item)
         self.table.setItem(current_row_count, 4, match_count_item)
 
-        # 파일명과 경로 컬럼에 delegate 설정 (검색 단어 굵게 표시)
-        if hasattr(self, 'current_keyword'):
-            delegate = SearchResultDelegate(self.current_keyword, self.current_regex)
-            self.table.setItemDelegateForRow(current_row_count, delegate)
-
         # 컬럼 너비를 내용에 맞게 자동 조정
         self.table.resizeColumnsToContents()
 
@@ -749,6 +744,13 @@ class FSearchGUI(QMainWindow):
 
         # 테이블 셀 더블클릭 시 파일 실행
         self.table.itemDoubleClicked.connect(self.open_file)
+
+        # 파일명과 경로 컬럼(0, 1)에 delegate 설정 (검색 단어 굵게 표시)
+        if hasattr(self, 'current_keyword'):
+            delegate_name = SearchResultDelegate(self.current_keyword, self.current_regex)
+            delegate_path = SearchResultDelegate(self.current_keyword, self.current_regex)
+            self.table.setItemDelegateForColumn(0, delegate_name)
+            self.table.setItemDelegateForColumn(1, delegate_path)
 
         # 검색 단어수로 정렬 (내림차순 - 큰 수부터)
         self.sort_table_by_match_count()
