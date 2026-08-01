@@ -146,7 +146,18 @@ class FileSearcher:
         return results
 
     def _collect_files(self) -> List[Path]:
-        """파일을 수집하고 캐시에 저장"""
+        """파일을 수집하고 캐시에 저장 - 지정된 파일 형식만"""
+        # 허용된 파일 확장자
+        allowed_extensions = {
+            '.doc', '.docx',      # 워드파일
+            '.hwp',               # 한글파일
+            '.pdf',               # PDF파일
+            '.xls', '.xlsx',      # 엑셀파일
+            '.txt',               # 텍스트파일
+            '.html', '.htm',      # HTML파일
+            '.md'                 # 마크다운파일
+        }
+
         files_to_search = []
 
         # 파일 수집
@@ -156,7 +167,8 @@ class FileSearcher:
 
             for file in files:
                 file_path = Path(root) / file
-                if not self.should_ignore(file_path):
+                # 허용된 확장자만 수집
+                if not self.should_ignore(file_path) and file_path.suffix.lower() in allowed_extensions:
                     files_to_search.append(file_path)
 
         return files_to_search

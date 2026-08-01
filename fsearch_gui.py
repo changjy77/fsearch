@@ -93,13 +93,26 @@ class SearchWorker(QThread):
             self.error.emit(f"오류 발생: {str(e)}")
 
     def _collect_files(self) -> List[Path]:
-        """파일 수집"""
+        """파일 수집 - 지정된 파일 형식만"""
+        # 허용된 파일 확장자
+        allowed_extensions = {
+            '.doc', '.docx',      # 워드파일
+            '.hwp',               # 한글파일
+            '.pdf',               # PDF파일
+            '.xls', '.xlsx',      # 엑셀파일
+            '.txt',               # 텍스트파일
+            '.html', '.htm',      # HTML파일
+            '.md'                 # 마크다운파일
+        }
+
         files = []
         for root, dirs, filenames in os.walk(self.path):
             dirs[:] = [d for d in dirs if d not in self.ignore_dirs]
             for filename in filenames:
                 file_path = Path(root) / filename
-                files.append(file_path)
+                # 허용된 확장자만 수집
+                if file_path.suffix.lower() in allowed_extensions:
+                    files.append(file_path)
         return files
 
     def _search_file(self, file_path: Path, regex):
