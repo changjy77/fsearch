@@ -7,9 +7,11 @@ import sys
 import os
 import re
 import time
+import subprocess
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List
+from collections import defaultdict
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -18,7 +20,7 @@ from PyQt5.QtWidgets import (
     QSplitter, QMessageBox
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
-from PyQt5.QtGui import QIcon, QColor, QFont
+from PyQt5.QtGui import QIcon, QColor, QFont, QCursor
 
 
 class SearchWorker(QThread):
@@ -305,12 +307,22 @@ class FSearchGUI(QMainWindow):
         self.results = results
         self.progress_bar.setVisible(False)
 
+        # 파일별 검색 결과 개수 계산
+        file_counts = defaultdict(int)
+        for result in results:
+            file_counts[result['path']] += 1
+
+        # 개수 많은 순서대로 정렬
+        sorted_results = sorted(results, key=lambda r: (-file_counts[r['path']], r['path']))
+
         # 테이블에 결과 표시
-        self.table.setRowCount(len(results))
+        self.table.setRowCount(len(sorted_results))
         text_output = "검색 결과:\n" + "="*80 + "\n\n"
 
-        for row, result in enumerate(results):
+        for row, result in enumerate(sorted_results):
             path_item = QTableWidgetItem(result['path'])
+            path_item.setToolTip(result['path'])  # 마우스 오버 시 전체 경로 표시
+
             line_item = QTableWidgetItem(str(result['line']) if result['line'] else "-")
             content_item = QTableWidgetItem(result['content'] or "")
 
@@ -324,8 +336,11 @@ class FSearchGUI(QMainWindow):
             else:
                 text_output += f"{result['path']}\n\n"
 
+        # 테이블 셀 더블클릭 시 파일 실행
+        self.table.itemDoubleClicked.connect(self.open_file)
+
         self.text_output.setText(text_output)
-        self.result_count.setText(f"결과: {len(results)}개")
+        self.result_count.setText(f"결과: {len(sorted_results)}개 (파일: {len(file_counts)}개)")
 
     def search_error(self, error):
         """검색 오류"""
@@ -336,6 +351,35 @@ class FSearchGUI(QMainWindow):
     def refresh_cache(self):
         """캐시 새로고침"""
         QMessageBox.information(self, "캐시", "검색 시 파일 목록이 새로 수집됩니다.")
+
+    def open_file(self, item):
+        """파일 또는 폴더 열기"""
+        row = self.table.row(item)
+        path_item = self.table.item(row, 0)
+
+        if path_item is None:
+            return
+
+        file_path = path_item.text()
+
+        if not file_path or not Path(file_path).exists():
+            QMessageBox.warning(self, "오류", "파일을 찾을 수 없습니다.")
+            return
+
+        try:
+            # Windows에서 파일 열기
+            if sys.platform == 'win32':
+                os.startfile(file_path)
+            # macOS
+            elif sys.platform == 'darwin':
+                subprocess.Popen(['open', file_path])
+            # Linux
+            else:
+                subprocess.Popen(['xdg-open', file_path])
+
+            self.status_label.setText(f"✅ 파일 열음: {Path(file_path).name}")
+        except Exception as e:
+            QMessageBox.critical(self, "오류", f"파일을 열 수 없습니다:\n{str(e)}")
 
 
 def main():
