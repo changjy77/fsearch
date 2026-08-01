@@ -876,6 +876,14 @@ class FSearchGUI(QMainWindow):
 
         self.result_count.setText(f"결과: {len(results)}개 (파일: {len(file_counts)}개)")
 
+        # 현재 검색어와 관련된 실행 파일 개수 계산
+        current_keyword = getattr(self, 'current_keyword', '')
+        related_opened_files = [
+            item for item in self.open_file_history
+            if item.get('search_keyword') == current_keyword
+        ]
+        self.opened_btn.setText(f"✅ 실행된 파일 ({len(related_opened_files)})")
+
         # 로깅 - 검색 결과
         self.logger.info(f"검색 완료 - 총 {len(results)}개 결과 (파일: {len(file_counts)}개)")
 
@@ -929,11 +937,15 @@ class FSearchGUI(QMainWindow):
                     match_count = result.get('match_count', 0)
                     break
 
+            # 현재 검색어 저장 (검색어 필터링을 위해)
+            current_keyword = getattr(self, 'current_keyword', '')
+
             self.open_file_history.append({
                 'file': file_path,
                 'name': filename,
                 'timestamp': timestamp,
-                'match_count': match_count
+                'match_count': match_count,
+                'search_keyword': current_keyword
             })
 
             # 로깅
@@ -987,18 +999,16 @@ class FSearchGUI(QMainWindow):
         dialog.exec_()
 
     def show_opened_files(self):
-        """실행된 파일 목록 보기 - 검색 결과에 해당하는 파일만 표시"""
+        """실행된 파일 목록 보기 - 현재 검색어와 관련된 파일만 표시"""
         if not self.open_file_history:
             QMessageBox.information(self, "실행된 파일", "실행된 파일이 없습니다.\n\n검색 결과를 더블클릭해서 파일을 열어보세요.")
             return
 
-        # 검색 결과의 파일 경로 수집
-        result_files = {Path(r['full_path']).resolve() for r in self.results}
-
-        # 검색 결과와 일치하는 실행 파일 필터링
+        # 현재 검색어와 관련된 실행 파일 필터링
+        current_keyword = getattr(self, 'current_keyword', '')
         matched_opened_files = [
             item for item in self.open_file_history
-            if Path(item['file']).resolve() in result_files
+            if item.get('search_keyword') == current_keyword
         ]
 
         # 실행된 파일 목록을 보여주는 윈도우
@@ -1010,10 +1020,11 @@ class FSearchGUI(QMainWindow):
         layout = QVBoxLayout(dialog)
 
         # 통계 정보
+        current_keyword = getattr(self, 'current_keyword', '')
         if matched_opened_files:
-            info_label = QLabel(f"검색 결과 중 {len(matched_opened_files)}개의 파일을 실행했습니다.")
+            info_label = QLabel(f"검색어 '{current_keyword}'를 찾기 위해 {len(matched_opened_files)}개의 파일을 실행했습니다.")
         else:
-            info_label = QLabel("검색 결과에서 실행한 파일이 없습니다.")
+            info_label = QLabel(f"검색어 '{current_keyword}'와 관련된 실행 파일이 없습니다.")
         layout.addWidget(info_label)
 
         if matched_opened_files:
@@ -1051,7 +1062,7 @@ class FSearchGUI(QMainWindow):
             # 실행한 파일이 없을 때
             text_edit = QTextEdit()
             text_edit.setReadOnly(True)
-            text_edit.setText("검색 결과 중 실행한 파일이 없습니다.")
+            text_edit.setText(f"검색어 '{current_keyword}'와 관련된 실행 파일이 없습니다.")
             layout.addWidget(text_edit)
 
         # 닫기 버튼
