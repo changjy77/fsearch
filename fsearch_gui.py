@@ -610,6 +610,9 @@ class FSearchGUI(QMainWindow):
         # 테이블 셀 더블클릭 시 파일 실행
         self.table.itemDoubleClicked.connect(self.open_file)
 
+        # 검색 단어수로 정렬 (내림차순 - 큰 수부터)
+        self.sort_table_by_match_count()
+
         # 컬럼 너비 자동 조정
         self.table.resizeColumnsToContents()
 
@@ -723,6 +726,51 @@ class FSearchGUI(QMainWindow):
         close_btn = QPushButton("닫기")
         close_btn.clicked.connect(dialog.close)
         layout.addWidget(close_btn)
+
+        dialog.exec_()
+
+    def sort_table_by_match_count(self):
+        """테이블을 검색 단어수로 내림차순 정렬"""
+        # match_count는 4번 컬럼 (0: 파일명, 1: 경로, 2: 크기, 3: 수정날짜, 4: 검색 단어수)
+        items = []
+        for row in range(self.table.rowCount()):
+            match_count_item = self.table.item(row, 4)
+            if match_count_item:
+                try:
+                    match_count = int(match_count_item.text())
+                    items.append((row, match_count))
+                except:
+                    pass
+
+        # 검색 단어수로 내림차순 정렬
+        items.sort(key=lambda x: x[1], reverse=True)
+
+        # 테이블 행 순서 변경
+        # QTableWidget은 직접적인 행 이동이 없으므로, 모든 데이터를 수집했다가 다시 표시
+        table_data = []
+        for row in range(self.table.rowCount()):
+            row_data = []
+            for col in range(self.table.columnCount()):
+                item = self.table.item(row, col)
+                row_data.append(item.text() if item else "")
+            table_data.append(row_data)
+
+        # 검색 단어수로 정렬된 순서대로 테이블 다시 작성
+        self.table.setRowCount(0)  # 모든 행 제거
+        for row, match_count in items:
+            self.table.insertRow(self.table.rowCount())
+            new_row = self.table.rowCount() - 1
+            for col in range(len(table_data[row])):
+                item = QTableWidgetItem(table_data[row][col])
+                if col == 0:  # 파일명 (왼쪽 정렬)
+                    item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                elif col == 1:  # 경로 (왼쪽 정렬)
+                    item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                elif col == 2 or col == 4:  # 크기, 검색 단어수 (오른쪽 정렬)
+                    item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                else:  # 수정 날짜 (왼쪽 정렬)
+                    item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                self.table.setItem(new_row, col, item)
 
         dialog.exec_()
 
