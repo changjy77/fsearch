@@ -458,7 +458,8 @@ class FSearchGUI(QMainWindow):
         modified_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
         # 4: 검색 단어수 (오른쪽 정렬 - 숫자)
-        match_count_item = QTableWidgetItem(str(result['match_count']))
+        match_count = result.get('match_count', 0)
+        match_count_item = QTableWidgetItem(str(match_count))
         match_count_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
         self.table.setItem(current_row_count, 0, filename_item)
