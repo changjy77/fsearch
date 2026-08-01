@@ -882,7 +882,8 @@ class FSearchGUI(QMainWindow):
             item for item in self.open_file_history
             if item.get('search_keyword') == current_keyword
         ]
-        self.opened_btn.setText(f"✅ 실행된 파일 ({len(related_opened_files)})")
+        total_opened_files = len(self.open_file_history)
+        self.opened_btn.setText(f"✅ 실행된 파일 ({len(related_opened_files)}/{total_opened_files})")
 
         # 로깅 - 검색 결과
         self.logger.info(f"검색 완료 - 총 {len(results)}개 결과 (파일: {len(file_counts)}개)")
