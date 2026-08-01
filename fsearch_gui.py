@@ -26,6 +26,7 @@ from PyQt5.QtGui import QIcon, QColor, QFont, QCursor
 class SearchWorker(QThread):
     """검색을 별도 스레드에서 실행"""
     progress = pyqtSignal(int)
+    result_found = pyqtSignal(dict)  # 결과를 실시간으로 전송
     finished = pyqtSignal(list)
     status = pyqtSignal(str)
     error = pyqtSignal(str)
@@ -74,7 +75,11 @@ class SearchWorker(QThread):
 
                 for future in as_completed(futures):
                     try:
-                        results.extend(future.result())
+                        file_results = future.result()
+                        results.extend(file_results)
+                        # 실시간으로 각 결과 전송
+                        for result in file_results:
+                            self.result_found.emit(result)
                     except:
                         pass
 
@@ -101,14 +106,39 @@ class SearchWorker(QThread):
         """단일 파일 검색"""
         results = []
 
+        # 파일 정보 수집
+        try:
+            stat = file_path.stat()
+            file_size = stat.st_size
+            mod_time = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stat.st_mtime))
+        except:
+            file_size = 0
+            mod_time = "Unknown"
+
+        # 파일명과 폴더 경로 분리
+        filename = file_path.name
+        folder_path = str(file_path.parent)
+
+        # 파일 아이콘 가져오기
+        icon = SearchWorker.get_file_icon(filename)
+        filename_with_icon = f"{icon} {filename}"
+
+        match_count = 0
+
         # 파일명 검색
         if not self.content_only:
             if self._match_keyword(file_path.name, regex):
+                match_count += 1
                 results.append({
                     'type': 'filename',
-                    'path': str(file_path),
+                    'filename': filename_with_icon,
+                    'folder_path': folder_path,
+                    'full_path': str(file_path),
+                    'size': file_size,
+                    'modified': mod_time,
                     'line': None,
-                    'content': None
+                    'content': None,
+                    'match_count': match_count
                 })
 
         # 파일 내용 검색
@@ -117,11 +147,17 @@ class SearchWorker(QThread):
                 with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                     for line_num, line in enumerate(f, 1):
                         if self._match_keyword(line, regex):
+                            match_count += 1
                             results.append({
                                 'type': 'content',
-                                'path': str(file_path),
+                                'filename': filename_with_icon,
+                                'folder_path': folder_path,
+                                'full_path': str(file_path),
+                                'size': file_size,
+                                'modified': mod_time,
                                 'line': line_num,
-                                'content': line.rstrip()[:100]
+                                'content': line.rstrip()[:80],
+                                'match_count': match_count
                             })
             except:
                 pass
@@ -139,6 +175,77 @@ class SearchWorker(QThread):
         """바이너리 파일 확인"""
         binary_exts = {'exe', 'dll', 'so', 'png', 'jpg', 'zip', 'db', 'pdf'}
         return path.suffix.lower().lstrip('.') in binary_exts
+
+    @staticmethod
+    def get_file_icon(filename: str) -> str:
+        """파일 형식에 따라 아이콘 반환"""
+        ext = Path(filename).suffix.lower()
+
+        icon_map = {
+            # 문서
+            '.txt': '📄',
+            '.md': '📝',
+            '.pdf': '📕',
+            '.doc': '📘',
+            '.docx': '📘',
+            '.xls': '📊',
+            '.xlsx': '📊',
+            '.csv': '📋',
+            '.json': '⚙️',
+            '.xml': '⚙️',
+            '.yaml': '⚙️',
+            '.yml': '⚙️',
+
+            # 코드
+            '.py': '🐍',
+            '.js': '⚡',
+            '.ts': '📘',
+            '.tsx': '⚛️',
+            '.jsx': '⚛️',
+            '.cpp': '⚙️',
+            '.c': '⚙️',
+            '.h': '⚙️',
+            '.java': '☕',
+            '.cs': '💠',
+            '.go': '🐹',
+            '.rs': '🦀',
+            '.rb': '💎',
+            '.php': '🐘',
+            '.html': '🌐',
+            '.css': '🎨',
+            '.scss': '🎨',
+            '.sql': '🗄️',
+            '.sh': '🔧',
+            '.bat': '🔧',
+            '.ps1': '🔧',
+
+            # 이미지
+            '.png': '🖼️',
+            '.jpg': '🖼️',
+            '.jpeg': '🖼️',
+            '.gif': '🎬',
+            '.svg': '🎨',
+            '.ico': '🎯',
+
+            # 압축
+            '.zip': '📦',
+            '.rar': '📦',
+            '.7z': '📦',
+            '.tar': '📦',
+            '.gz': '📦',
+
+            # 실행파일
+            '.exe': '⚙️',
+            '.dll': '⚙️',
+            '.so': '⚙️',
+
+            # 기타
+            '.git': '🔀',
+            '.env': '🔐',
+            '.log': '📋',
+        }
+
+        return icon_map.get(ext, '📁')
 
 
 class FSearchGUI(QMainWindow):
@@ -227,8 +334,16 @@ class FSearchGUI(QMainWindow):
 
         # 테이블 탭
         self.table = QTableWidget()
-        self.table.setColumnCount(3)
-        self.table.setHorizontalHeaderLabels(["파일 경로", "줄", "내용"])
+        self.table.setColumnCount(7)
+        self.table.setHorizontalHeaderLabels([
+            "파일명",
+            "경로",
+            "크기 (bytes)",
+            "수정 날짜",
+            "줄",
+            "내용",
+            "검색 단어수"
+        ])
         self.table.horizontalHeader().setStretchLastSection(True)
         self.tabs.addTab(self.table, "🗂️ 결과 (테이블)")
 
@@ -288,6 +403,7 @@ class FSearchGUI(QMainWindow):
         )
 
         self.search_worker.progress.connect(self.update_progress)
+        self.search_worker.result_found.connect(self.add_result_row)  # 실시간 결과 추가
         self.search_worker.finished.connect(self.search_finished)
         self.search_worker.status.connect(self.update_status)
         self.search_worker.error.connect(self.search_error)
@@ -298,6 +414,43 @@ class FSearchGUI(QMainWindow):
         """진행바 업데이트"""
         self.progress_bar.setValue(value)
 
+    def add_result_row(self, result):
+        """테이블에 결과 행 추가 (실시간)"""
+        current_row_count = self.table.rowCount()
+        self.table.insertRow(current_row_count)
+
+        # 파일 크기 포맷
+        size = result['size']
+        if size < 1024:
+            size_str = f"{size} B"
+        elif size < 1024 * 1024:
+            size_str = f"{size / 1024:.1f} KB"
+        else:
+            size_str = f"{size / (1024 * 1024):.1f} MB"
+
+        # 각 컬럼에 데이터 입력
+        filename_item = QTableWidgetItem(result['filename'])
+        filename_item.setToolTip(result['full_path'])
+
+        path_item = QTableWidgetItem(result['folder_path'])
+        path_item.setToolTip(result['folder_path'])
+
+        size_item = QTableWidgetItem(size_str)
+        size_item.setToolTip(str(result['size']) + " bytes")
+
+        modified_item = QTableWidgetItem(result['modified'])
+        line_item = QTableWidgetItem(str(result['line']) if result['line'] else "-")
+        content_item = QTableWidgetItem(result['content'] or "")
+        match_count_item = QTableWidgetItem(str(result['match_count']))
+
+        self.table.setItem(current_row_count, 0, filename_item)
+        self.table.setItem(current_row_count, 1, path_item)
+        self.table.setItem(current_row_count, 2, size_item)
+        self.table.setItem(current_row_count, 3, modified_item)
+        self.table.setItem(current_row_count, 4, line_item)
+        self.table.setItem(current_row_count, 5, content_item)
+        self.table.setItem(current_row_count, 6, match_count_item)
+
     def update_status(self, status):
         """상태 메시지 업데이트"""
         self.status_label.setText(status)
@@ -307,40 +460,37 @@ class FSearchGUI(QMainWindow):
         self.results = results
         self.progress_bar.setVisible(False)
 
-        # 파일별 검색 결과 개수 계산
-        file_counts = defaultdict(int)
-        for result in results:
-            file_counts[result['path']] += 1
-
-        # 개수 많은 순서대로 정렬
-        sorted_results = sorted(results, key=lambda r: (-file_counts[r['path']], r['path']))
-
-        # 테이블에 결과 표시
-        self.table.setRowCount(len(sorted_results))
-        text_output = "검색 결과:\n" + "="*80 + "\n\n"
-
-        for row, result in enumerate(sorted_results):
-            path_item = QTableWidgetItem(result['path'])
-            path_item.setToolTip(result['path'])  # 마우스 오버 시 전체 경로 표시
-
-            line_item = QTableWidgetItem(str(result['line']) if result['line'] else "-")
-            content_item = QTableWidgetItem(result['content'] or "")
-
-            self.table.setItem(row, 0, path_item)
-            self.table.setItem(row, 1, line_item)
-            self.table.setItem(row, 2, content_item)
-
-            # 텍스트 출력도 생성
-            if result['line']:
-                text_output += f"{result['path']}:{result['line']}\n  {result['content']}\n\n"
-            else:
-                text_output += f"{result['path']}\n\n"
-
         # 테이블 셀 더블클릭 시 파일 실행
         self.table.itemDoubleClicked.connect(self.open_file)
 
+        # 컬럼 너비 자동 조정
+        self.table.resizeColumnsToContents()
+
+        # 텍스트 탭 업데이트
+        text_output = "검색 결과:\n" + "="*100 + "\n\n"
+        for result in results:
+            size = result['size']
+            if size < 1024:
+                size_str = f"{size} B"
+            elif size < 1024 * 1024:
+                size_str = f"{size / 1024:.1f} KB"
+            else:
+                size_str = f"{size / (1024 * 1024):.1f} MB"
+
+            if result['line']:
+                text_output += f"[{result['filename']}] 크기: {size_str}, 수정일: {result['modified']}\n"
+                text_output += f"  줄 {result['line']}: {result['content']}\n\n"
+            else:
+                text_output += f"[{result['filename']}] 크기: {size_str}, 수정일: {result['modified']}\n\n"
+
         self.text_output.setText(text_output)
-        self.result_count.setText(f"결과: {len(sorted_results)}개 (파일: {len(file_counts)}개)")
+
+        # 파일별 검색 결과 개수 계산
+        file_counts = defaultdict(int)
+        for result in results:
+            file_counts[result['full_path']] += 1
+
+        self.result_count.setText(f"결과: {len(results)}개 (파일: {len(file_counts)}개)")
 
     def search_error(self, error):
         """검색 오류"""
@@ -355,12 +505,12 @@ class FSearchGUI(QMainWindow):
     def open_file(self, item):
         """파일 또는 폴더 열기"""
         row = self.table.row(item)
-        path_item = self.table.item(row, 0)
-
-        if path_item is None:
+        # 해당 행의 결과에서 full_path 찾기
+        if row < 0 or row >= len(self.results):
             return
 
-        file_path = path_item.text()
+        result = self.results[row]
+        file_path = result.get('full_path') or result.get('path')
 
         if not file_path or not Path(file_path).exists():
             QMessageBox.warning(self, "오류", "파일을 찾을 수 없습니다.")
