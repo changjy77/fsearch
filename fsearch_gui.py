@@ -214,7 +214,19 @@ class SearchWorker(QThread):
         self.excluded_files = []  # 초기화
 
         for root, dirs, filenames in os.walk(self.path):
-            dirs[:] = [d for d in dirs if d not in self.ignore_dirs]
+            # 제외할 폴더 필터링 - 전체 경로로 비교
+            dirs_to_remove = []
+            for d in dirs:
+                dir_path = Path(root) / d
+                # ignore_dirs에 전체 경로가 있는지 확인
+                if any(str(dir_path) == excluded or str(dir_path).startswith(excluded + os.sep)
+                       for excluded in self.ignore_dirs):
+                    dirs_to_remove.append(d)
+
+            # 제외할 폴더 제거
+            for d in dirs_to_remove:
+                dirs.remove(d)
+
             for filename in filenames:
                 file_path = Path(root) / filename
                 # 허용된 확장자만 수집
