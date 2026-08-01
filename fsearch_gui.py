@@ -435,22 +435,14 @@ class FSearchGUI(QMainWindow):
 
         exclude_layout.addLayout(exclude_header_layout)
 
-        # 제외 폴더 체크박스 영역 (스크롤 가능)
+        # 제외 폴더 체크박스 영역
         self.exclude_scroll = QWidget()
         self.exclude_checkboxes_layout = QHBoxLayout(self.exclude_scroll)
         self.exclude_checkboxes_layout.setContentsMargins(0, 0, 0, 0)
         self.exclude_checkboxes_layout.setSpacing(5)
 
-        # 기본 제외 폴더 체크박스들
+        # 제외 폴더 저장소
         self.exclude_checkboxes = {}
-        self.default_excludes = ['.git', '__pycache__', 'node_modules', '.venv', 'venv', '.idea', '.vscode']
-
-        for folder in self.default_excludes:
-            cb = QCheckBox(folder)
-            cb.setChecked(True)  # 기본값으로 체크됨
-            cb.setMaximumHeight(25)
-            self.exclude_checkboxes_layout.addWidget(cb)
-            self.exclude_checkboxes[folder] = cb
 
         self.exclude_checkboxes_layout.addStretch()
         exclude_layout.addWidget(self.exclude_scroll)
