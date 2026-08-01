@@ -17,10 +17,10 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QTextEdit, QFileDialog, QCheckBox,
     QSpinBox, QProgressBar, QComboBox, QTabWidget, QTableWidget, QTableWidgetItem,
-    QSplitter, QMessageBox
+    QSplitter, QMessageBox, QStyledItemDelegate
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
-from PyQt5.QtGui import QIcon, QColor, QFont, QCursor
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QRect
+from PyQt5.QtGui import QIcon, QColor, QFont, QCursor, QPainter
 
 # 파일 형식별 텍스트 추출 라이브러리
 try:
@@ -42,6 +42,88 @@ try:
     import html2text
 except ImportError:
     html2text = None
+
+
+class SearchResultDelegate(QStyledItemDelegate):
+    """검색 결과에서 검색 단어를 굵게 표시하는 delegate"""
+
+    def __init__(self, keyword, use_regex=False):
+        super().__init__()
+        self.keyword = keyword
+        self.use_regex = use_regex
+        if use_regex:
+            try:
+                self.pattern = re.compile(keyword, re.IGNORECASE)
+            except:
+                self.pattern = None
+        else:
+            self.pattern = None
+
+    def paint(self, painter, option, index):
+        """검색 단어를 굵게 표시하여 렌더링"""
+        text = index.data(Qt.DisplayRole)
+        if not text:
+            super().paint(painter, option, index)
+            return
+
+        # 검색 단어 찾기
+        if self.use_regex and self.pattern:
+            matches = list(self.pattern.finditer(str(text)))
+        else:
+            matches = []
+            keyword_lower = self.keyword.lower()
+            text_lower = str(text).lower()
+            start = 0
+            while True:
+                pos = text_lower.find(keyword_lower, start)
+                if pos == -1:
+                    break
+                matches.append((pos, pos + len(self.keyword)))
+                start = pos + 1
+
+        if not matches:
+            super().paint(painter, option, index)
+            return
+
+        # 배경색 설정
+        painter.fillRect(option.rect, option.palette.base())
+
+        # 텍스트와 bold 텍스트 렌더링
+        painter.setPen(option.palette.text().color())
+
+        bold_font = QFont(option.font)
+        bold_font.setBold(True)
+
+        x = option.rect.left() + 2
+        y = option.rect.top() + option.fontMetrics.ascent() + 2
+
+        text_str = str(text)
+        last_pos = 0
+
+        for start, end in matches:
+            # 일반 텍스트
+            if start > last_pos:
+                normal_text = text_str[last_pos:start]
+                painter.setFont(option.font)
+                fm = painter.fontMetrics()
+                painter.drawText(x, y, normal_text)
+                x += fm.width(normal_text)
+
+            # 굵은 텍스트
+            bold_text = text_str[start:end]
+            painter.setFont(bold_font)
+            fm_bold = painter.fontMetrics()
+            painter.drawText(x, y, bold_text)
+            x += fm_bold.width(bold_text)
+
+            last_pos = end
+
+        # 남은 텍스트
+        if last_pos < len(text_str):
+            remaining_text = text_str[last_pos:]
+            painter.setFont(option.font)
+            fm = painter.fontMetrics()
+            painter.drawText(x, y, remaining_text)
 
 
 class SearchWorker(QThread):
@@ -566,6 +648,10 @@ class FSearchGUI(QMainWindow):
             QMessageBox.warning(self, "경로 오류", "경로가 존재하지 않습니다.")
             return
 
+        # 현재 검색 단어 저장
+        self.current_keyword = keyword
+        self.current_regex = self.regex_cb.isChecked()
+
         # 검색 시작
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
@@ -643,6 +729,11 @@ class FSearchGUI(QMainWindow):
         self.table.setItem(current_row_count, 2, size_item)
         self.table.setItem(current_row_count, 3, modified_item)
         self.table.setItem(current_row_count, 4, match_count_item)
+
+        # 파일명과 경로 컬럼에 delegate 설정 (검색 단어 굵게 표시)
+        if hasattr(self, 'current_keyword'):
+            delegate = SearchResultDelegate(self.current_keyword, self.current_regex)
+            self.table.setItemDelegateForRow(current_row_count, delegate)
 
         # 컬럼 너비를 내용에 맞게 자동 조정
         self.table.resizeColumnsToContents()
