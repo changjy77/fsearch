@@ -22,6 +22,27 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt5.QtGui import QIcon, QColor, QFont, QCursor
 
+# 파일 형식별 텍스트 추출 라이브러리
+try:
+    from docx import Document
+except ImportError:
+    Document = None
+
+try:
+    from PyPDF2 import PdfReader
+except ImportError:
+    PdfReader = None
+
+try:
+    from openpyxl import load_workbook
+except ImportError:
+    load_workbook = None
+
+try:
+    import html2text
+except ImportError:
+    html2text = None
+
 
 class SearchWorker(QThread):
     """검색을 별도 스레드에서 실행"""
@@ -126,6 +147,75 @@ class SearchWorker(QThread):
 
         return files
 
+    def _extract_text(self, file_path: Path) -> str:
+        """파일 형식별로 텍스트 추출"""
+        ext = file_path.suffix.lower()
+
+        try:
+            if ext == '.txt' or ext == '.md':
+                # 텍스트/마크다운 파일
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    return f.read()
+
+            elif ext == '.html' or ext == '.htm':
+                # HTML 파일
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    return f.read()
+
+            elif ext == '.docx' and Document:
+                # Word 문서
+                try:
+                    doc = Document(file_path)
+                    text = '\n'.join([para.text for para in doc.paragraphs])
+                    return text
+                except:
+                    return ""
+
+            elif ext == '.pdf' and PdfReader:
+                # PDF 파일
+                try:
+                    reader = PdfReader(file_path)
+                    text = ""
+                    for page in reader.pages:
+                        text += page.extract_text() + "\n"
+                    return text
+                except:
+                    return ""
+
+            elif ext in ['.xlsx', '.xls'] and load_workbook:
+                # Excel 파일
+                try:
+                    if ext == '.xlsx':
+                        wb = load_workbook(file_path, data_only=True)
+                        text = ""
+                        for ws in wb.sheetnames:
+                            sheet = wb[ws]
+                            for row in sheet.iter_rows():
+                                for cell in row:
+                                    if cell.value:
+                                        text += str(cell.value) + " "
+                                text += "\n"
+                        return text
+                    else:
+                        # .xls 파일은 openpyxl로 지원하지 않음
+                        import xlrd
+                        wb = xlrd.open_workbook(file_path)
+                        text = ""
+                        for sheet in wb.sheets():
+                            for row in sheet.get_rows():
+                                for cell in row:
+                                    text += str(cell.value) + " "
+                                text += "\n"
+                        return text
+                except:
+                    return ""
+
+            else:
+                return ""
+
+        except Exception as e:
+            return ""
+
     def _search_file(self, file_path: Path, regex):
         """단일 파일 검색"""
         results = []
@@ -148,24 +238,31 @@ class SearchWorker(QThread):
         filename_with_icon = f"{icon} {filename}"
 
         total_match_count = 0
+        filename_matched = False
 
         # 파일명 검색
         if not self.content_only:
             if self._match_keyword(file_path.name, regex):
                 total_match_count += 1
+                filename_matched = True
 
-        # 파일 내용 검색
-        if not self.name_only and not self._is_binary(file_path):
-            try:
-                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                    for line in f:
-                        if self._match_keyword(line, regex):
-                            total_match_count += 1
-            except:
-                pass
+        # 파일 내용 검색 - 파일 형식별로 텍스트 추출
+        content_match_count = 0
+        if not self.name_only:
+            # 파일에서 텍스트 추출
+            text = self._extract_text(file_path)
+            if text:
+                # 추출된 텍스트를 줄 단위로 검색
+                for line in text.split('\n'):
+                    if self._match_keyword(line, regex):
+                        total_match_count += 1
+                        content_match_count += 1
 
         # 매칭이 있으면 파일당 하나의 결과만 추가
         if total_match_count > 0:
+            # 디버그 출력
+            print(f"[DEBUG] {filename}: 파일명 매칭={filename_matched}, 내용 매칭={content_match_count}, 합계={total_match_count}")
+
             results.append({
                 'type': 'file_summary',
                 'filename': filename_with_icon,

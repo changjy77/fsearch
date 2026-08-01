@@ -13,6 +13,22 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Tuple, Optional
 
+# 파일 형식별 텍스트 추출 라이브러리
+try:
+    from docx import Document
+except ImportError:
+    Document = None
+
+try:
+    from PyPDF2 import PdfReader
+except ImportError:
+    PdfReader = None
+
+try:
+    from openpyxl import load_workbook
+except ImportError:
+    load_workbook = None
+
 
 class ProgressBar:
     """간단한 진행바"""
@@ -88,9 +104,58 @@ class FileSearcher:
         binary_extensions = {
             'exe', 'dll', 'so', 'dylib', 'bin', 'o', 'obj',
             'png', 'jpg', 'jpeg', 'gif', 'bmp', 'zip', 'tar', 'gz',
-            'db', 'sqlite', 'iso', 'dmg', 'pdf', 'doc', 'docx'
+            'db', 'sqlite', 'iso', 'dmg'
         }
         return path.suffix.lower().lstrip('.') in binary_extensions
+
+    def extract_text(self, path: Path) -> str:
+        """파일 형식별로 텍스트 추출"""
+        ext = path.suffix.lower()
+
+        try:
+            if ext in ['.txt', '.md']:
+                with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                    return f.read()
+
+            elif ext in ['.html', '.htm']:
+                with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                    return f.read()
+
+            elif ext == '.docx' and Document:
+                try:
+                    doc = Document(path)
+                    return '\n'.join([para.text for para in doc.paragraphs])
+                except:
+                    return ""
+
+            elif ext == '.pdf' and PdfReader:
+                try:
+                    reader = PdfReader(path)
+                    text = ""
+                    for page in reader.pages:
+                        text += page.extract_text() + "\n"
+                    return text
+                except:
+                    return ""
+
+            elif ext in ['.xlsx'] and load_workbook:
+                try:
+                    wb = load_workbook(path, data_only=True)
+                    text = ""
+                    for ws in wb.sheetnames:
+                        sheet = wb[ws]
+                        for row in sheet.iter_rows():
+                            for cell in row:
+                                if cell.value:
+                                    text += str(cell.value) + " "
+                            text += "\n"
+                    return text
+                except:
+                    return ""
+            else:
+                return ""
+        except:
+            return ""
 
     def match_keyword(self, text: str) -> bool:
         """키워드 매칭"""
@@ -104,19 +169,16 @@ class FileSearcher:
         return self.match_keyword(path.name)
 
     def search_content(self, path: Path) -> List[Tuple[int, str]]:
-        """파일 내용 검색"""
+        """파일 내용 검색 - 파일 형식별로 텍스트 추출"""
         matches = []
 
-        if self.is_binary(path):
-            return matches
-
-        try:
-            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-                for line_num, line in enumerate(f, 1):
-                    if self.match_keyword(line):
-                        matches.append((line_num, line.rstrip()))
-        except Exception as e:
-            pass  # 읽을 수 없는 파일은 무시
+        # 파일에서 텍스트 추출
+        text = self.extract_text(path)
+        if text:
+            # 추출된 텍스트를 줄 단위로 검색
+            for line_num, line in enumerate(text.split('\n'), 1):
+                if self.match_keyword(line):
+                    matches.append((line_num, line.rstrip()[:200]))  # 첫 200자만
 
         return matches
 
