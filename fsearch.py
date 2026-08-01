@@ -8,12 +8,56 @@ import argparse
 import os
 import re
 import sys
+import time
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Tuple, Optional
 
 
+class ProgressBar:
+    """간단한 진행바"""
+    def __init__(self, total: int, width: int = 40):
+        self.total = total
+        self.width = width
+        self.current = 0
+        self.start_time = time.time()
+
+    def update(self, current: int):
+        """진행상황 업데이트"""
+        self.current = current
+        self._print()
+
+    def _print(self):
+        """진행바 출력"""
+        if self.total == 0:
+            return
+
+        percent = self.current / self.total
+        filled = int(self.width * percent)
+        bar = '█' * filled + '░' * (self.width - filled)
+
+        elapsed = time.time() - self.start_time
+        if self.current > 0 and elapsed > 0:
+            rate = self.current / elapsed
+            remaining = (self.total - self.current) / rate if rate > 0 else 0
+        else:
+            remaining = 0
+
+        sys.stdout.write(f"\r[{bar}] {self.current}/{self.total} ({percent*100:.1f}%) | 남은 시간: {remaining:.0f}초")
+        sys.stdout.flush()
+
+    def finish(self):
+        """진행바 완료"""
+        elapsed = time.time() - self.start_time
+        sys.stdout.write(f"\r[{'█' * self.width}] {self.total}/{self.total} (100.0%) | 소요 시간: {elapsed:.1f}초\n")
+        sys.stdout.flush()
+
+
 class FileSearcher:
+    # 클래스 변수: 파일 캐시 (프로세스 내에서 공유)
+    _file_cache = {}
+    _cache_path = None
+
     def __init__(self, keyword: str, path: Path, ignore_dirs: List[str], use_regex: bool, max_workers: int = 8):
         self.keyword = keyword
         self.path = path
@@ -101,8 +145,8 @@ class FileSearcher:
 
         return results
 
-    def search(self) -> List[dict]:
-        """전체 검색 실행"""
+    def _collect_files(self) -> List[Path]:
+        """파일을 수집하고 캐시에 저장"""
         files_to_search = []
 
         # 파일 수집
@@ -115,8 +159,34 @@ class FileSearcher:
                 if not self.should_ignore(file_path):
                     files_to_search.append(file_path)
 
+        return files_to_search
+
+    def search(self, use_cache: bool = True) -> List[dict]:
+        """전체 검색 실행
+
+        Args:
+            use_cache: 파일 캐시 사용 여부 (기본값: True)
+        """
+        # 캐시 확인
+        cache_key = str(self.path.resolve())
+        if use_cache and cache_key in FileSearcher._file_cache:
+            files_to_search = FileSearcher._file_cache[cache_key]
+            print("💾 캐시된 파일 목록을 사용합니다.\n")
+        else:
+            print("📂 파일을 수집 중입니다...")
+            files_to_search = self._collect_files()
+            # 캐시에 저장
+            FileSearcher._file_cache[cache_key] = files_to_search
+            print(f"✅ 총 {len(files_to_search)}개의 파일을 찾았습니다. (캐시됨)\n")
+
         if not files_to_search:
             return []
+
+        # 진행바 생성
+        progress = ProgressBar(len(files_to_search))
+        processed = 0
+
+        print("🔍 검색 중입니다...\n")
 
         # 병렬 검색
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
@@ -128,7 +198,19 @@ class FileSearcher:
                 except Exception as e:
                     pass
 
+                processed += 1
+                progress.update(processed)
+
+        progress.finish()
+        print()
+
         return self.results
+
+    @classmethod
+    def clear_cache(cls):
+        """파일 캐시 삭제"""
+        cls._file_cache.clear()
+        print("✅ 파일 캐시가 삭제되었습니다.")
 
 
 def print_results(results: List[dict], limit: Optional[int], name_only: bool = False, content_only: bool = False):
@@ -196,6 +278,7 @@ def main():
     parser.add_argument('-l', '--limit', type=int, help='결과 개수 제한')
     parser.add_argument('-r', '--regex', action='store_true', help='정규식 사용')
     parser.add_argument('-w', '--workers', type=int, default=8, help='병렬 처리 스레드 수 (기본값: 8)')
+    parser.add_argument('--refresh', action='store_true', help='파일 캐시 새로고침')
 
     args = parser.parse_args()
 
@@ -213,6 +296,11 @@ def main():
     default_ignores = {'.git', '__pycache__', 'node_modules', '.venv', 'venv', '.idea', '.vscode'}
     ignore_dirs.extend(default_ignores)
 
+    # 캐시 새로고침 옵션
+    if args.refresh:
+        FileSearcher.clear_cache()
+        print()
+
     print(f"🔍 검색어: '{args.keyword}'")
     print(f"📁 경로: {args.path.resolve()}")
     print(f"🔧 옵션: 정규식={args.regex}, 스레드={args.workers}")
@@ -227,7 +315,9 @@ def main():
         max_workers=args.workers
     )
 
-    results = searcher.search()
+    # 캐시 사용 여부 결정
+    use_cache = not args.refresh
+    results = searcher.search(use_cache=use_cache)
 
     # 결과 출력
     print_results(
