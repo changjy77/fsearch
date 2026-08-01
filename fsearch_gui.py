@@ -978,10 +978,19 @@ class FSearchGUI(QMainWindow):
         dialog.exec_()
 
     def show_opened_files(self):
-        """실행된 파일 목록 보기"""
+        """실행된 파일 목록 보기 - 검색 결과에 해당하는 파일만 표시"""
         if not self.open_file_history:
             QMessageBox.information(self, "실행된 파일", "실행된 파일이 없습니다.\n\n검색 결과를 더블클릭해서 파일을 열어보세요.")
             return
+
+        # 검색 결과의 파일 경로 수집
+        result_files = {Path(r['full_path']).resolve() for r in self.results}
+
+        # 검색 결과와 일치하는 실행 파일 필터링
+        matched_opened_files = [
+            item for item in self.open_file_history
+            if Path(item['file']).resolve() in result_files
+        ]
 
         # 실행된 파일 목록을 보여주는 윈도우
         from PyQt5.QtWidgets import QDialog
@@ -992,7 +1001,10 @@ class FSearchGUI(QMainWindow):
         layout = QVBoxLayout(dialog)
 
         # 통계 정보
-        info_label = QLabel(f"총 {len(self.open_file_history)}개의 파일을 실행했습니다.")
+        if matched_opened_files:
+            info_label = QLabel(f"검색 결과 중 {len(matched_opened_files)}개의 파일을 실행했습니다.")
+        else:
+            info_label = QLabel("검색 결과에서 실행한 파일이 없습니다.")
         layout.addWidget(info_label)
 
         # 실행된 파일 목록
@@ -1000,9 +1012,12 @@ class FSearchGUI(QMainWindow):
         text_edit.setReadOnly(True)
         text_edit.setFont(QFont("Consolas", 9))
 
-        opened_text = ""
-        for i, item in enumerate(self.open_file_history, 1):
-            opened_text += f"{i}. [{item['timestamp']}] {item['file']}\n"
+        if matched_opened_files:
+            opened_text = ""
+            for i, item in enumerate(matched_opened_files, 1):
+                opened_text += f"{i}. [{item['timestamp']}]\n   파일: {item['file']}\n\n"
+        else:
+            opened_text = "검색 결과 중 실행한 파일이 없습니다."
 
         text_edit.setText(opened_text)
         layout.addWidget(text_edit)
