@@ -364,12 +364,6 @@ class FSearchGUI(QMainWindow):
         self.search_worker = None
         self.results = []
         self.excluded_files = []  # 제외된 파일 목록
-
-        # 실시간 검색 타이머
-        self.search_timer = QTimer()
-        self.search_timer.setSingleShot(True)
-        self.search_timer.timeout.connect(self.search)
-
         self.init_ui()
 
     def init_ui(self):
@@ -402,9 +396,8 @@ class FSearchGUI(QMainWindow):
         # 검색어
         options_layout.addWidget(QLabel("검색:"))
         self.keyword_input = QLineEdit()
-        self.keyword_input.setPlaceholderText("검색할 키워드 입력... (자동 검색)")
+        self.keyword_input.setPlaceholderText("검색할 키워드 입력...")
         self.keyword_input.returnPressed.connect(self.search)
-        self.keyword_input.textChanged.connect(self.on_keyword_changed)  # 실시간 검색
         self.keyword_input.setMaximumHeight(25)
         options_layout.addWidget(self.keyword_input, 2)
 
@@ -541,18 +534,6 @@ class FSearchGUI(QMainWindow):
         footer_layout.addWidget(QLabel("fsearch v2.0 - GUI Edition"))
         footer_container.setMaximumHeight(20)
         layout.addWidget(footer_container)
-
-    def on_keyword_changed(self, text):
-        """검색어 변경 시 호출 - 실시간 검색"""
-        # 타이머 리셋 (이전 타이머 취소)
-        self.search_timer.stop()
-
-        # 검색어가 비어있으면 아무것도 하지 않음
-        if not text.strip():
-            return
-
-        # 0.5초 후에 검색 시작
-        self.search_timer.start(500)
 
     def add_exclude_folder(self):
         """제외할 폴더 추가"""
