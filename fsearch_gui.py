@@ -385,10 +385,12 @@ class FSearchGUI(QMainWindow):
         options_layout.addWidget(QLabel("경로:"))
         self.path_input = QLineEdit()
         self.path_input.setText(str(Path.cwd()))
+        self.path_input.setMaximumHeight(25)
         options_layout.addWidget(self.path_input)
 
         browse_btn = QPushButton("찾아보기")
         browse_btn.clicked.connect(self.browse_path)
+        browse_btn.setMaximumHeight(25)
         options_layout.addWidget(browse_btn)
 
         # 검색어
@@ -396,20 +398,27 @@ class FSearchGUI(QMainWindow):
         self.keyword_input = QLineEdit()
         self.keyword_input.setPlaceholderText("검색할 키워드 입력...")
         self.keyword_input.returnPressed.connect(self.search)
+        self.keyword_input.setMaximumHeight(25)
         options_layout.addWidget(self.keyword_input, 2)
 
         search_btn = QPushButton("🔍 검색")
         search_btn.clicked.connect(self.search)
+        search_btn.setMaximumHeight(25)
         options_layout.addWidget(search_btn)
 
         layout.addLayout(options_layout)
 
         # ===== 추가 옵션 영역 =====
-        options2_layout = QHBoxLayout()
+        options2_container = QWidget()
+        options2_layout = QHBoxLayout(options2_container)
+        options2_layout.setContentsMargins(0, 0, 0, 0)
 
         self.name_only_cb = QCheckBox("파일명만")
+        self.name_only_cb.setMaximumHeight(25)
         self.content_only_cb = QCheckBox("내용만")
+        self.content_only_cb.setMaximumHeight(25)
         self.regex_cb = QCheckBox("정규식")
+        self.regex_cb.setMaximumHeight(25)
 
         options2_layout.addWidget(self.name_only_cb)
         options2_layout.addWidget(self.content_only_cb)
@@ -420,28 +429,34 @@ class FSearchGUI(QMainWindow):
         self.workers_spin.setValue(8)
         self.workers_spin.setMinimum(1)
         self.workers_spin.setMaximum(16)
+        self.workers_spin.setMaximumHeight(25)
         options2_layout.addWidget(self.workers_spin)
 
         self.refresh_btn = QPushButton("🔄 새로고침")
         self.refresh_btn.clicked.connect(self.refresh_cache)
+        self.refresh_btn.setMaximumHeight(25)
         options2_layout.addWidget(self.refresh_btn)
 
         self.excluded_btn = QPushButton("📁 제외된 파일")
         self.excluded_btn.clicked.connect(self.show_excluded_files)
+        self.excluded_btn.setMaximumHeight(25)
         options2_layout.addWidget(self.excluded_btn)
 
         options2_layout.addStretch()
+        options2_container.setMaximumHeight(30)
 
-        layout.addLayout(options2_layout)
+        layout.addWidget(options2_container)
 
         # ===== 진행바 =====
         self.progress_bar = QProgressBar()
         self.progress_bar.setMaximum(100)
         self.progress_bar.setVisible(False)
+        self.progress_bar.setMaximumHeight(20)
         layout.addWidget(self.progress_bar)
 
         # ===== 상태 메시지 =====
         self.status_label = QLabel("준비 완료")
+        self.status_label.setMaximumHeight(20)
         layout.addWidget(self.status_label)
 
         # ===== 탭: 결과 표시 =====
@@ -475,12 +490,15 @@ class FSearchGUI(QMainWindow):
         layout.addWidget(self.tabs, 1)
 
         # ===== 푸터 =====
-        footer_layout = QHBoxLayout()
+        footer_container = QWidget()
+        footer_layout = QHBoxLayout(footer_container)
+        footer_layout.setContentsMargins(0, 0, 0, 0)
         self.result_count = QLabel("결과: 0개")
         footer_layout.addWidget(self.result_count)
         footer_layout.addStretch()
-        footer_layout.addWidget(QLabel("fsearch v1.1 - GUI Edition"))
-        layout.addLayout(footer_layout)
+        footer_layout.addWidget(QLabel("fsearch v2.0 - GUI Edition"))
+        footer_container.setMaximumHeight(20)
+        layout.addWidget(footer_container)
 
     def browse_path(self):
         """폴더 선택 대화창"""
