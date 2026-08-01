@@ -30,6 +30,7 @@ class SearchWorker(QThread):
     finished = pyqtSignal(list)
     status = pyqtSignal(str)
     error = pyqtSignal(str)
+    excluded_files_updated = pyqtSignal(list)  # 제외된 파일 목록 업데이트
 
     def __init__(self, keyword, path, ignore_dirs, name_only, content_only, use_regex, max_workers):
         super().__init__()
@@ -41,6 +42,7 @@ class SearchWorker(QThread):
         self.use_regex = use_regex
         self.max_workers = max_workers
         self.results = []
+        self.excluded_files = []  # 제외된 파일 목록
 
     def run(self):
         """검색 실행"""
@@ -106,6 +108,8 @@ class SearchWorker(QThread):
         }
 
         files = []
+        self.excluded_files = []  # 초기화
+
         for root, dirs, filenames in os.walk(self.path):
             dirs[:] = [d for d in dirs if d not in self.ignore_dirs]
             for filename in filenames:
@@ -113,6 +117,13 @@ class SearchWorker(QThread):
                 # 허용된 확장자만 수집
                 if file_path.suffix.lower() in allowed_extensions:
                     files.append(file_path)
+                else:
+                    # 제외된 파일 추적
+                    self.excluded_files.append(str(file_path))
+
+        # 제외된 파일 목록 업데이트 신호
+        self.excluded_files_updated.emit(self.excluded_files)
+
         return files
 
     def _search_file(self, file_path: Path, regex):
@@ -258,6 +269,7 @@ class FSearchGUI(QMainWindow):
         super().__init__()
         self.search_worker = None
         self.results = []
+        self.excluded_files = []  # 제외된 파일 목록
         self.init_ui()
 
     def init_ui(self):
@@ -319,6 +331,10 @@ class FSearchGUI(QMainWindow):
         self.refresh_btn = QPushButton("🔄 새로고침")
         self.refresh_btn.clicked.connect(self.refresh_cache)
         options2_layout.addWidget(self.refresh_btn)
+
+        self.excluded_btn = QPushButton("📁 제외된 파일")
+        self.excluded_btn.clicked.connect(self.show_excluded_files)
+        options2_layout.addWidget(self.excluded_btn)
 
         options2_layout.addStretch()
 
@@ -414,6 +430,7 @@ class FSearchGUI(QMainWindow):
         self.search_worker.finished.connect(self.search_finished)
         self.search_worker.status.connect(self.update_status)
         self.search_worker.error.connect(self.search_error)
+        self.search_worker.excluded_files_updated.connect(self.update_excluded_files)
 
         self.search_worker.start()
 
@@ -555,6 +572,47 @@ class FSearchGUI(QMainWindow):
             self.status_label.setText(f"✅ 파일 열음: {Path(file_path).name}")
         except Exception as e:
             QMessageBox.critical(self, "오류", f"파일을 열 수 없습니다:\n{str(e)}")
+
+    def update_excluded_files(self, excluded_files):
+        """제외된 파일 목록 업데이트"""
+        self.excluded_files = excluded_files
+        # 버튼 텍스트에 제외된 파일 개수 표시
+        count = len(excluded_files)
+        self.excluded_btn.setText(f"📁 제외된 파일 ({count})")
+
+    def show_excluded_files(self):
+        """제외된 파일 목록 보기"""
+        if not self.excluded_files:
+            QMessageBox.information(self, "제외된 파일", "제외된 파일이 없습니다.\n\n먼저 검색을 실행해주세요.")
+            return
+
+        # 제외된 파일 목록을 보여주는 윈도우
+        from PyQt5.QtWidgets import QDialog
+        dialog = QDialog(self)
+        dialog.setWindowTitle("📁 제외된 파일 목록")
+        dialog.setGeometry(200, 200, 800, 600)
+
+        layout = QVBoxLayout(dialog)
+
+        # 통계 정보
+        info_label = QLabel(f"총 {len(self.excluded_files)}개의 파일이 제외되었습니다.")
+        layout.addWidget(info_label)
+
+        # 제외된 파일 목록
+        text_edit = QTextEdit()
+        text_edit.setReadOnly(True)
+        text_edit.setFont(QFont("Consolas", 9))
+
+        excluded_text = "\n".join(self.excluded_files)
+        text_edit.setText(excluded_text)
+        layout.addWidget(text_edit)
+
+        # 닫기 버튼
+        close_btn = QPushButton("닫기")
+        close_btn.clicked.connect(dialog.close)
+        layout.addWidget(close_btn)
+
+        dialog.exec_()
 
 
 def main():
