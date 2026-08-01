@@ -417,25 +417,45 @@ class FSearchGUI(QMainWindow):
 
         # ===== 경로 제외 영역 =====
         exclude_container = QWidget()
-        exclude_layout = QHBoxLayout(exclude_container)
-        exclude_layout.setContentsMargins(0, 0, 0, 0)
+        exclude_layout = QVBoxLayout(exclude_container)
+        exclude_layout.setContentsMargins(0, 3, 0, 3)
+        exclude_layout.setSpacing(3)
 
+        # 제외 폴더 제목과 찾아보기 버튼
+        exclude_header_layout = QHBoxLayout()
         exclude_label = QLabel("제외 폴더:")
-        exclude_layout.addWidget(exclude_label)
+        exclude_header_layout.addWidget(exclude_label)
+
+        add_exclude_btn = QPushButton("+ 폴더 추가")
+        add_exclude_btn.clicked.connect(self.add_exclude_folder)
+        add_exclude_btn.setMaximumHeight(25)
+        add_exclude_btn.setMaximumWidth(100)
+        exclude_header_layout.addWidget(add_exclude_btn)
+        exclude_header_layout.addStretch()
+
+        exclude_layout.addLayout(exclude_header_layout)
+
+        # 제외 폴더 체크박스 영역 (스크롤 가능)
+        self.exclude_scroll = QWidget()
+        self.exclude_checkboxes_layout = QHBoxLayout(self.exclude_scroll)
+        self.exclude_checkboxes_layout.setContentsMargins(0, 0, 0, 0)
+        self.exclude_checkboxes_layout.setSpacing(5)
 
         # 기본 제외 폴더 체크박스들
         self.exclude_checkboxes = {}
-        default_excludes = ['.git', '__pycache__', 'node_modules', '.venv', 'venv', '.idea', '.vscode']
+        self.default_excludes = ['.git', '__pycache__', 'node_modules', '.venv', 'venv', '.idea', '.vscode']
 
-        for folder in default_excludes:
+        for folder in self.default_excludes:
             cb = QCheckBox(folder)
             cb.setChecked(True)  # 기본값으로 체크됨
             cb.setMaximumHeight(25)
-            exclude_layout.addWidget(cb)
+            self.exclude_checkboxes_layout.addWidget(cb)
             self.exclude_checkboxes[folder] = cb
 
-        exclude_layout.addStretch()
-        exclude_container.setMaximumHeight(30)
+        self.exclude_checkboxes_layout.addStretch()
+        exclude_layout.addWidget(self.exclude_scroll)
+
+        exclude_container.setMaximumHeight(60)
         layout.addWidget(exclude_container)
 
         # ===== 추가 옵션 영역 =====
@@ -541,6 +561,30 @@ class FSearchGUI(QMainWindow):
 
         # 0.5초 후에 검색 시작
         self.search_timer.start(500)
+
+    def add_exclude_folder(self):
+        """제외할 폴더 추가"""
+        folder = QFileDialog.getExistingDirectory(self, "제외할 폴더 선택")
+        if folder:
+            folder_name = Path(folder).name  # 폴더 이름만 추출
+            full_path = folder  # 전체 경로 저장
+
+            # 이미 추가되었는지 확인
+            if full_path not in self.exclude_checkboxes:
+                # 새로운 체크박스 생성
+                cb = QCheckBox(folder_name)
+                cb.setChecked(True)  # 새로 추가된 폴더는 제외됨
+                cb.setMaximumHeight(25)
+                cb.setToolTip(full_path)  # 전체 경로를 툴팁으로 표시
+
+                self.exclude_checkboxes_layout.insertWidget(
+                    self.exclude_checkboxes_layout.count() - 1, cb
+                )
+                self.exclude_checkboxes[full_path] = cb
+
+                self.status_label.setText(f"✅ 제외 폴더 추가됨: {folder_name}")
+            else:
+                QMessageBox.information(self, "알림", "이미 추가된 폴더입니다.")
 
     def browse_path(self):
         """폴더 선택 대화창"""
