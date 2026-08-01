@@ -123,12 +123,28 @@ class SearchWorker(QThread):
         icon = SearchWorker.get_file_icon(filename)
         filename_with_icon = f"{icon} {filename}"
 
-        match_count = 0
+        total_match_count = 0
+        content_matches = []  # (줄번호, 내용) 임시 저장
 
         # 파일명 검색
         if not self.content_only:
             if self._match_keyword(file_path.name, regex):
-                match_count += 1
+                total_match_count += 1
+
+        # 파일 내용 검색 (먼저 카운트만)
+        if not self.name_only and not self._is_binary(file_path):
+            try:
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    for line_num, line in enumerate(f, 1):
+                        if self._match_keyword(line, regex):
+                            total_match_count += 1
+                            content_matches.append((line_num, line.rstrip()[:80]))
+            except:
+                pass
+
+        # 파일명 매칭 결과 추가 (총 카운트 포함)
+        if not self.content_only and total_match_count > 0:
+            if self._match_keyword(file_path.name, regex):
                 results.append({
                     'type': 'filename',
                     'filename': filename_with_icon,
@@ -138,29 +154,22 @@ class SearchWorker(QThread):
                     'modified': mod_time,
                     'line': None,
                     'content': None,
-                    'match_count': match_count
+                    'match_count': total_match_count  # 파일 내 총 매칭 횟수
                 })
 
-        # 파일 내용 검색
-        if not self.name_only and not self._is_binary(file_path):
-            try:
-                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                    for line_num, line in enumerate(f, 1):
-                        if self._match_keyword(line, regex):
-                            match_count += 1
-                            results.append({
-                                'type': 'content',
-                                'filename': filename_with_icon,
-                                'folder_path': folder_path,
-                                'full_path': str(file_path),
-                                'size': file_size,
-                                'modified': mod_time,
-                                'line': line_num,
-                                'content': line.rstrip()[:80],
-                                'match_count': match_count
-                            })
-            except:
-                pass
+        # 파일 내용 매칭 결과 추가 (총 카운트 포함)
+        for line_num, content in content_matches:
+            results.append({
+                'type': 'content',
+                'filename': filename_with_icon,
+                'folder_path': folder_path,
+                'full_path': str(file_path),
+                'size': file_size,
+                'modified': mod_time,
+                'line': line_num,
+                'content': content,
+                'match_count': total_match_count  # 파일 내 총 매칭 횟수
+            })
 
         return results
 
