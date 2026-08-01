@@ -919,12 +919,21 @@ class FSearchGUI(QMainWindow):
             filename = Path(file_path).name
             self.status_label.setText(f"✅ 파일 열음: {filename}")
 
-            # 실행된 파일 기록
+            # 실행된 파일 기록 - 해당 파일의 검색 결과 정보도 저장
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+            # 현재 파일의 검색 결과 정보 찾기
+            match_count = 0
+            for result in self.results:
+                if result.get('full_path') == file_path:
+                    match_count = result.get('match_count', 0)
+                    break
+
             self.open_file_history.append({
                 'file': file_path,
                 'name': filename,
-                'timestamp': timestamp
+                'timestamp': timestamp,
+                'match_count': match_count
             })
 
             # 로깅
@@ -993,10 +1002,10 @@ class FSearchGUI(QMainWindow):
         ]
 
         # 실행된 파일 목록을 보여주는 윈도우
-        from PyQt5.QtWidgets import QDialog
+        from PyQt5.QtWidgets import QDialog, QTableWidget, QTableWidgetItem
         dialog = QDialog(self)
         dialog.setWindowTitle("✅ 실행된 파일 목록")
-        dialog.setGeometry(200, 200, 800, 600)
+        dialog.setGeometry(200, 200, 900, 600)
 
         layout = QVBoxLayout(dialog)
 
@@ -1007,20 +1016,43 @@ class FSearchGUI(QMainWindow):
             info_label = QLabel("검색 결과에서 실행한 파일이 없습니다.")
         layout.addWidget(info_label)
 
-        # 실행된 파일 목록
-        text_edit = QTextEdit()
-        text_edit.setReadOnly(True)
-        text_edit.setFont(QFont("Consolas", 9))
-
         if matched_opened_files:
-            opened_text = ""
-            for i, item in enumerate(matched_opened_files, 1):
-                opened_text += f"{i}. [{item['timestamp']}]\n   파일: {item['file']}\n\n"
-        else:
-            opened_text = "검색 결과 중 실행한 파일이 없습니다."
+            # 테이블 형식으로 파일 목록 표시
+            table = QTableWidget()
+            table.setColumnCount(3)
+            table.setHorizontalHeaderLabels(["파일명", "실행 시간", "검색 단어수"])
+            table.setRowCount(len(matched_opened_files))
 
-        text_edit.setText(opened_text)
-        layout.addWidget(text_edit)
+            for row, item in enumerate(matched_opened_files):
+                # 파일명
+                name_item = QTableWidgetItem(item['name'])
+                name_item.setToolTip(item['file'])
+                table.setItem(row, 0, name_item)
+
+                # 실행 시간
+                time_item = QTableWidgetItem(item['timestamp'])
+                table.setItem(row, 1, time_item)
+
+                # 검색 단어수
+                match_item = QTableWidgetItem(str(item.get('match_count', 0)))
+                match_item.setTextAlignment(Qt.AlignCenter | Qt.AlignVCenter)
+                table.setItem(row, 2, match_item)
+
+            # 테이블 설정
+            table.horizontalHeader().setStretchLastSection(False)
+            table.verticalHeader().setVisible(False)
+            table.setSelectionBehavior(0)
+
+            # 행 더블클릭 이벤트 - 작업 로깅 확인
+            table.itemDoubleClicked.connect(lambda item: self.show_file_logs(matched_opened_files[table.row(item)]))
+
+            layout.addWidget(table)
+        else:
+            # 실행한 파일이 없을 때
+            text_edit = QTextEdit()
+            text_edit.setReadOnly(True)
+            text_edit.setText("검색 결과 중 실행한 파일이 없습니다.")
+            layout.addWidget(text_edit)
 
         # 닫기 버튼
         close_btn = QPushButton("닫기")
@@ -1028,6 +1060,59 @@ class FSearchGUI(QMainWindow):
         layout.addWidget(close_btn)
 
         dialog.exec_()
+
+    def show_file_logs(self, file_item):
+        """파일의 작업 로깅 확인"""
+        from PyQt5.QtWidgets import QDialog
+
+        log_dialog = QDialog(self)
+        log_dialog.setWindowTitle(f"📋 작업 로깅 - {file_item['name']}")
+        log_dialog.setGeometry(300, 300, 900, 500)
+
+        layout = QVBoxLayout(log_dialog)
+
+        # 파일 정보
+        info_text = (
+            f"파일명: {file_item['name']}\n"
+            f"경로: {file_item['file']}\n"
+            f"실행 시간: {file_item['timestamp']}\n"
+            f"검색 단어 매칭: {file_item.get('match_count', 0)}회\n"
+            + "="*80 + "\n\n"
+        )
+
+        # 로그 파일에서 해당 파일의 기록 읽기
+        log_dir = Path.home() / ".fsearch" / "logs"
+        log_file = log_dir / f"fsearch_{datetime.now().strftime('%Y%m%d')}.log"
+
+        log_content = info_text
+        if log_file.exists():
+            try:
+                with open(log_file, 'r', encoding='utf-8') as f:
+                    all_logs = f.read()
+                    # 파일명이 포함된 로그만 필터링
+                    file_logs = [line for line in all_logs.split('\n') if file_item['name'] in line or file_item['file'] in line]
+                    if file_logs:
+                        log_content += "📝 작업 기록:\n" + "\n".join(file_logs)
+                    else:
+                        log_content += "📝 작업 기록이 없습니다."
+            except Exception as e:
+                log_content += f"로그 읽기 오류: {str(e)}"
+        else:
+            log_content += "📝 로그 파일을 찾을 수 없습니다."
+
+        # 로그 표시
+        log_edit = QTextEdit()
+        log_edit.setReadOnly(True)
+        log_edit.setFont(QFont("Consolas", 9))
+        log_edit.setText(log_content)
+        layout.addWidget(log_edit)
+
+        # 닫기 버튼
+        close_btn = QPushButton("닫기")
+        close_btn.clicked.connect(log_dialog.close)
+        layout.addWidget(close_btn)
+
+        log_dialog.exec_()
 
     def sort_table_by_match_count(self):
         """테이블을 검색 단어수로 내림차순 정렬"""
