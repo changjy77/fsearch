@@ -746,11 +746,14 @@ class FSearchGUI(QMainWindow):
         self.table.itemDoubleClicked.connect(self.open_file)
 
         # 파일명과 경로 컬럼(0, 1)에 delegate 설정 (검색 단어 굵게 표시)
-        if hasattr(self, 'current_keyword'):
-            delegate_name = SearchResultDelegate(self.current_keyword, self.current_regex)
-            delegate_path = SearchResultDelegate(self.current_keyword, self.current_regex)
-            self.table.setItemDelegateForColumn(0, delegate_name)
-            self.table.setItemDelegateForColumn(1, delegate_path)
+        try:
+            if hasattr(self, 'current_keyword'):
+                delegate_name = SearchResultDelegate(self.current_keyword, self.current_regex)
+                delegate_path = SearchResultDelegate(self.current_keyword, self.current_regex)
+                self.table.setItemDelegateForColumn(0, delegate_name)
+                self.table.setItemDelegateForColumn(1, delegate_path)
+        except Exception as e:
+            print(f"Delegate 설정 오류: {e}")
 
         # 검색 단어수로 정렬 (내림차순 - 큰 수부터)
         self.sort_table_by_match_count()
