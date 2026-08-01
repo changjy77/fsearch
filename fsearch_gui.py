@@ -772,8 +772,6 @@ class FSearchGUI(QMainWindow):
                     item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
                 self.table.setItem(new_row, col, item)
 
-        dialog.exec_()
-
 
 def main():
     app = QApplication(sys.argv)
