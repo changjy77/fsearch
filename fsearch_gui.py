@@ -1403,39 +1403,51 @@ class FSearchGUI(QMainWindow):
 
     def open_file(self, item):
         """파일 또는 폴더 열기 (더블클릭 시 호출)"""
-        if not item:
-            return
-
-        # 테이블 아이템에서 파일 경로 가져오기
-        file_path = item.data(Qt.UserRole)
-
-        if not file_path:
-            QMessageBox.warning(self, "오류", "파일 정보를 찾을 수 없습니다.")
-            return
-
-        if not Path(file_path).exists():
-            QMessageBox.warning(self, "오류", f"파일을 찾을 수 없습니다:\n{file_path}")
-            return
-
         try:
-            # Windows에서 파일 열기
+            # item 검증
+            if not isinstance(item, QTableWidgetItem):
+                return
+
+            # 파일 경로 추출
+            file_path = item.data(Qt.UserRole)
+
+            # 파일 경로 검증
+            if not file_path or not isinstance(file_path, str):
+                self.status_label.setText("❌ 파일 경로 정보가 없습니다")
+                return
+
+            # 문자열 정리
+            file_path = str(file_path).strip()
+            if not file_path:
+                self.status_label.setText("❌ 파일 경로가 비어있습니다")
+                return
+
+            # 경로 존재 여부 확인
+            path_obj = Path(file_path)
+            if not path_obj.exists():
+                self.status_label.setText(f"❌ 파일을 찾을 수 없습니다: {file_path}")
+                return
+
+            # 파일 실행
             if sys.platform == 'win32':
                 os.startfile(file_path)
-            # macOS
             elif sys.platform == 'darwin':
                 subprocess.Popen(['open', file_path])
-            # Linux
             else:
                 subprocess.Popen(['xdg-open', file_path])
 
-            filename = Path(file_path).name
+            filename = path_obj.name
             self.status_label.setText(f"✅ 파일 열음: {filename}")
 
             # 로깅
-            self.logger.info(f"파일 실행 - {file_path}")
+            if hasattr(self, 'logger'):
+                self.logger.info(f"파일 실행 - {file_path}")
+
         except Exception as e:
-            QMessageBox.critical(self, "오류", f"파일을 열 수 없습니다:\n{str(e)}")
-            self.logger.error(f"파일 실행 오류 - {file_path}: {str(e)}")
+            error_msg = f"파일 실행 오류: {str(e)}"
+            self.status_label.setText(f"❌ {error_msg}")
+            if hasattr(self, 'logger'):
+                self.logger.error(error_msg)
 
     def update_excluded_files(self, excluded_files):
         """제외된 파일 목록 업데이트"""
