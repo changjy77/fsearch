@@ -155,6 +155,7 @@ class SearchWorker(QThread):
     error = pyqtSignal(str)
     excluded_files_updated = pyqtSignal(list)  # 제외된 파일 목록 업데이트
     file_processing = pyqtSignal(str)  # 현재 처리 중인 파일 이름
+    no_match_files_updated = pyqtSignal(list)  # 검색어 미포함 파일 목록
 
     def __init__(self, keyword, path, ignore_dirs, name_only, content_only, use_regex, max_workers):
         super().__init__()
@@ -212,7 +213,12 @@ class SearchWorker(QThread):
                     processed += 1
                     self.progress.emit(int((processed / len(files)) * 100))
 
+            # 매칭된 파일들과 미매칭 파일들 분류
+            matched_files = {result['full_path'] for result in results}
+            no_match_files = [str(f) for f in files if str(f) not in matched_files]
+
             self.finished.emit(results)
+            self.no_match_files_updated.emit(no_match_files)
             self.status.emit(f"✅ 검색 완료: {len(results)}개 결과")
 
         except Exception as e:
@@ -495,6 +501,7 @@ class FSearchGUI(QMainWindow):
         self.results = []
         self.excluded_files = []  # 제외된 파일 목록
         self.read_files = []  # 읽은 파일 목록 (누적)
+        self.no_match_files = []  # 검색어 미포함 파일 목록 (누적)
         self.logger = setup_logging()  # 로깅 설정
         self.init_ui()
 
@@ -601,6 +608,11 @@ class FSearchGUI(QMainWindow):
         self.read_files_btn.clicked.connect(self.show_read_files)
         self.read_files_btn.setMaximumHeight(25)
         options2_layout.addWidget(self.read_files_btn)
+
+        self.no_match_files_btn = QPushButton("❌ 검색어 미포함 (0)")
+        self.no_match_files_btn.clicked.connect(self.show_no_match_files)
+        self.no_match_files_btn.setMaximumHeight(25)
+        options2_layout.addWidget(self.no_match_files_btn)
 
         options2_layout.addStretch()
         options2_container.setMaximumHeight(30)
@@ -734,6 +746,7 @@ class FSearchGUI(QMainWindow):
         self.search_worker.error.connect(self.search_error)
         self.search_worker.excluded_files_updated.connect(self.update_excluded_files)
         self.search_worker.file_processing.connect(self.update_current_file)  # 현재 처리 중인 파일
+        self.search_worker.no_match_files_updated.connect(self.update_no_match_files)  # 검색어 미포함 파일
 
         # 로깅
         self.logger.info(f"검색 시작 - 경로: {path}, 검색어: {keyword}")
@@ -799,6 +812,16 @@ class FSearchGUI(QMainWindow):
     def update_current_file(self, file_info):
         """현재 처리 중인 파일 표시"""
         self.status_label.setText(f"검색 중: {file_info}")
+
+    def update_no_match_files(self, no_match_files):
+        """검색어 미포함 파일 누적 업데이트"""
+        # 중복 제거하면서 누적
+        for file_path in no_match_files:
+            if file_path not in self.no_match_files:
+                self.no_match_files.append(file_path)
+
+        # 버튼 텍스트 업데이트
+        self.no_match_files_btn.setText(f"❌ 검색어 미포함 ({len(self.no_match_files)})")
 
     def search_finished(self, results):
         """검색 완료"""
@@ -999,6 +1022,40 @@ class FSearchGUI(QMainWindow):
 
         read_text = "\n".join(self.read_files)
         text_edit.setText(read_text)
+        layout.addWidget(text_edit)
+
+        # 닫기 버튼
+        close_btn = QPushButton("닫기")
+        close_btn.clicked.connect(dialog.close)
+        layout.addWidget(close_btn)
+
+        dialog.exec_()
+
+    def show_no_match_files(self):
+        """검색어 미포함 파일 목록 보기"""
+        if not self.no_match_files:
+            QMessageBox.information(self, "검색어 미포함", "검색어 미포함 파일이 없습니다.\n\n먼저 검색을 실행해주세요.")
+            return
+
+        # 검색어 미포함 파일 목록을 보여주는 윈도우
+        from PyQt5.QtWidgets import QDialog
+        dialog = QDialog(self)
+        dialog.setWindowTitle("❌ 검색어 미포함 파일 목록")
+        dialog.setGeometry(200, 200, 800, 600)
+
+        layout = QVBoxLayout(dialog)
+
+        # 통계 정보
+        info_label = QLabel(f"총 {len(self.no_match_files)}개의 파일에서 검색어를 찾지 못했습니다. (누적)")
+        layout.addWidget(info_label)
+
+        # 검색어 미포함 파일 목록
+        text_edit = QTextEdit()
+        text_edit.setReadOnly(True)
+        text_edit.setFont(QFont("Consolas", 9))
+
+        no_match_text = "\n".join(self.no_match_files)
+        text_edit.setText(no_match_text)
         layout.addWidget(text_edit)
 
         # 닫기 버튼
