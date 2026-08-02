@@ -1151,45 +1151,37 @@ class FSearchGUI(QMainWindow):
         # 각 컬럼에 데이터 입력
         # 0: 파일명 (검색어 강조 표시)
         filename_text = result['filename']
+        filename_item = QTableWidgetItem()
+        filename_item.setToolTip(result['full_path'])
+        filename_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+
         if hasattr(self, 'current_keyword') and self.current_keyword:
             highlighted_filename = self._highlight_keyword(filename_text, self.current_keyword, self.current_regex)
             if '<span' in highlighted_filename:
-                filename_label = QLabel()
-                filename_label.setText(highlighted_filename)
-                filename_label.setStyleSheet("padding: 3px;")
-                filename_label.setToolTip(result['full_path'])
-                self.table.setCellWidget(current_row_count, 0, filename_label)
+                filename_item.setText(filename_text)  # HTML 제거하고 텍스트만 표시
             else:
-                filename_item = QTableWidgetItem(filename_text)
-                filename_item.setToolTip(result['full_path'])
-                filename_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-                self.table.setItem(current_row_count, 0, filename_item)
+                filename_item.setText(filename_text)
         else:
-            filename_item = QTableWidgetItem(filename_text)
-            filename_item.setToolTip(result['full_path'])
-            filename_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-            self.table.setItem(current_row_count, 0, filename_item)
+            filename_item.setText(filename_text)
+
+        self.table.setItem(current_row_count, 0, filename_item)
 
         # 1: 경로 (검색어 강조 표시)
         path_text = result['folder_path']
+        path_item = QTableWidgetItem()
+        path_item.setToolTip(path_text)
+        path_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+
         if hasattr(self, 'current_keyword') and self.current_keyword:
             highlighted_path = self._highlight_keyword(path_text, self.current_keyword, self.current_regex)
             if '<span' in highlighted_path:
-                path_label = QLabel()
-                path_label.setText(highlighted_path)
-                path_label.setStyleSheet("padding: 3px;")
-                path_label.setToolTip(path_text)
-                self.table.setCellWidget(current_row_count, 1, path_label)
+                path_item.setText(path_text)  # HTML 제거하고 텍스트만 표시
             else:
-                path_item = QTableWidgetItem(path_text)
-                path_item.setToolTip(path_text)
-                path_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-                self.table.setItem(current_row_count, 1, path_item)
+                path_item.setText(path_text)
         else:
-            path_item = QTableWidgetItem(path_text)
-            path_item.setToolTip(path_text)
-            path_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-            self.table.setItem(current_row_count, 1, path_item)
+            path_item.setText(path_text)
+
+        self.table.setItem(current_row_count, 1, path_item)
 
         # 2: 크기 (오른쪽 정렬 - 숫자)
         size_item = QTableWidgetItem(size_str)
