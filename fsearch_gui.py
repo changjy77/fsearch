@@ -895,6 +895,7 @@ class FSearchGUI(QMainWindow):
         self.table.horizontalHeader().setSectionResizeMode(1, 1)  # 경로: 확장 가능
         self.table.verticalHeader().setVisible(False)  # 행 번호 숨김
         self.table.setSelectionBehavior(0)  # 행 선택 모드
+        self.table.itemDoubleClicked.connect(self.open_file)  # 더블클릭 시 파일 실행
         self.tabs.addTab(self.table, "🗂️ 결과 (테이블)")
 
         # 텍스트 탭
@@ -1252,9 +1253,6 @@ class FSearchGUI(QMainWindow):
 
         # self.results는 이미 add_result_row에서 누적됨
         self.progress_bar.setVisible(False)
-
-        # 테이블 셀 더블클릭 시 파일 실행
-        self.table.itemDoubleClicked.connect(self.open_file)
 
         # 검색 단어를 포함하는 셀을 굵게 표시 + 빨간색
         if hasattr(self, 'current_keyword'):
