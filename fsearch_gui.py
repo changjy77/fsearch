@@ -1001,9 +1001,15 @@ class FSearchGUI(QMainWindow):
         # 검색 중이면 중지
         if self.is_searching:
             self.is_searching = False
+            # 모든 타이머/동작 멈추기
             self.blink_timer.stop()
+            self.progress_bar.setVisible(False)
+            # 검색 워커 중단 신호
             if self.search_worker:
                 self.search_worker.stop_flag = True
+                self.search_worker.wait()  # 스레드 완전 종료 대기
+            # 상태 메시지 및 버튼 복원
+            self.status_label.setText("⏹️ 검색 중단됨")
             self.search_btn.setText("🔍 검색")
             self.search_btn.setStyleSheet("")
             return
