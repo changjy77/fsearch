@@ -1156,58 +1156,91 @@ class FSearchGUI(QMainWindow):
 
     def sort_table_by_match_count(self):
         """테이블을 검색 단어수로 내림차순 정렬"""
-        # match_count는 4번 컬럼 (0: 파일명, 1: 경로, 2: 크기, 3: 수정날짜, 4: 검색 단어수)
-        items = []
-        for row in range(self.table.rowCount()):
-            match_count_item = self.table.item(row, 4)
-            if match_count_item:
-                try:
-                    match_count = int(match_count_item.text())
-                    items.append((row, match_count))
-                except:
-                    pass
+        # results를 match_count로 정렬
+        sorted_results = sorted(self.results, key=lambda x: x.get('match_count', 0), reverse=True)
 
-        # 검색 단어수로 내림차순 정렬
-        items.sort(key=lambda x: x[1], reverse=True)
+        # 테이블 초기화
+        self.table.setRowCount(0)
 
-        # 테이블 행 순서 변경
-        # QTableWidget은 직접적인 행 이동이 없으므로, 모든 데이터를 수집했다가 다시 표시
-        table_data = []
-        for row in range(self.table.rowCount()):
-            row_data = []
-            for col in range(self.table.columnCount()):
-                # setCellWidget으로 추가된 위젯도 확인
-                widget = self.table.cellWidget(row, col)
-                if widget:
-                    row_data.append(widget)
+        # 정렬된 결과를 테이블에 다시 추가 (강조 표기 포함)
+        shown_files = set()
+        for result in sorted_results:
+            file_path = result['full_path']
+            if file_path not in shown_files:
+                shown_files.add(file_path)
+
+                # add_result_row와 동일한 로직으로 추가
+                current_row_count = self.table.rowCount()
+                self.table.insertRow(current_row_count)
+
+                # 파일 크기 포맷
+                size = result['size']
+                if size < 1024:
+                    size_str = f"{size} B"
+                elif size < 1024 * 1024:
+                    size_str = f"{size / 1024:.1f} KB"
                 else:
-                    item = self.table.item(row, col)
-                    row_data.append(item.text() if item else "")
-            table_data.append(row_data)
+                    size_str = f"{size / (1024 * 1024):.1f} MB"
 
-        # 검색 단어수로 정렬된 순서대로 테이블 다시 작성
-        self.table.setRowCount(0)  # 모든 행 제거
-        for row, match_count in items:
-            self.table.insertRow(self.table.rowCount())
-            new_row = self.table.rowCount() - 1
-            for col in range(len(table_data[row])):
-                data = table_data[row][col]
-
-                # QLabel 위젯인 경우
-                if isinstance(data, QLabel):
-                    self.table.setCellWidget(new_row, col, data)
+                # 각 컬럼에 데이터 입력
+                # 0: 파일명 (검색어 강조 표시)
+                filename_text = result['filename']
+                if hasattr(self, 'current_keyword') and self.current_keyword:
+                    highlighted_filename = self._highlight_keyword(filename_text, self.current_keyword, self.current_regex)
+                    if '<span' in highlighted_filename:
+                        filename_label = QLabel()
+                        filename_label.setText(highlighted_filename)
+                        filename_label.setStyleSheet("padding: 3px;")
+                        filename_label.setToolTip(result['full_path'])
+                        self.table.setCellWidget(current_row_count, 0, filename_label)
+                    else:
+                        filename_item = QTableWidgetItem(filename_text)
+                        filename_item.setToolTip(result['full_path'])
+                        filename_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                        self.table.setItem(current_row_count, 0, filename_item)
                 else:
-                    # 일반 텍스트인 경우
-                    item = QTableWidgetItem(data)
-                    if col == 0:  # 파일명 (왼쪽 정렬)
-                        item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-                    elif col == 1:  # 경로 (왼쪽 정렬)
-                        item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-                    elif col == 2 or col == 4:  # 크기, 검색 단어수 (오른쪽 정렬)
-                        item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                    else:  # 수정 날짜 (왼쪽 정렬)
-                        item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-                    self.table.setItem(new_row, col, item)
+                    filename_item = QTableWidgetItem(filename_text)
+                    filename_item.setToolTip(result['full_path'])
+                    filename_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                    self.table.setItem(current_row_count, 0, filename_item)
+
+                # 1: 경로 (검색어 강조 표시)
+                path_text = result['folder_path']
+                if hasattr(self, 'current_keyword') and self.current_keyword:
+                    highlighted_path = self._highlight_keyword(path_text, self.current_keyword, self.current_regex)
+                    if '<span' in highlighted_path:
+                        path_label = QLabel()
+                        path_label.setText(highlighted_path)
+                        path_label.setStyleSheet("padding: 3px;")
+                        path_label.setToolTip(path_text)
+                        self.table.setCellWidget(current_row_count, 1, path_label)
+                    else:
+                        path_item = QTableWidgetItem(path_text)
+                        path_item.setToolTip(path_text)
+                        path_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                        self.table.setItem(current_row_count, 1, path_item)
+                else:
+                    path_item = QTableWidgetItem(path_text)
+                    path_item.setToolTip(path_text)
+                    path_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                    self.table.setItem(current_row_count, 1, path_item)
+
+                # 2: 크기
+                size_item = QTableWidgetItem(size_str)
+                size_item.setToolTip(str(result['size']) + " bytes")
+                size_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                self.table.setItem(current_row_count, 2, size_item)
+
+                # 3: 수정 날짜
+                modified_item = QTableWidgetItem(result['modified'])
+                modified_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                self.table.setItem(current_row_count, 3, modified_item)
+
+                # 4: 검색 단어수
+                match_count = result.get('match_count', 0)
+                match_count_item = QTableWidgetItem(str(match_count))
+                match_count_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                self.table.setItem(current_row_count, 4, match_count_item)
 
 
 def main():
