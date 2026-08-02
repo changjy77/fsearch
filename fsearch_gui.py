@@ -274,6 +274,7 @@ class SearchWorker(QThread):
     excluded_files_updated = pyqtSignal(list)  # 제외된 파일 목록 업데이트
     file_processing = pyqtSignal(str)  # 현재 처리 중인 파일 이름
     no_match_files_updated = pyqtSignal(list)  # 검색어 미포함 파일 목록
+    skipped_files_count = pyqtSignal(int)  # 스킵된 파일 갯수
 
     def __init__(self, keyword, path, ignore_dirs, name_only, content_only, use_regex, max_workers, skip_large_files=False):
         super().__init__()
@@ -288,6 +289,7 @@ class SearchWorker(QThread):
         self.results = []
         self.excluded_files = []  # 제외된 파일 목록
         self.file_cache = {}  # 실시간 캐싱: 파일 경로 → 텍스트
+        self.skipped_large_files = 0  # 스킵된 대용량 파일 갯수
 
     def run(self):
         """검색 실행"""
@@ -519,6 +521,8 @@ class SearchWorker(QThread):
 
         # 대용량 파일 스킵 (100MB 이상)
         if self.skip_large_files and file_size > 100 * 1024 * 1024:
+            self.skipped_large_files += 1
+            self.skipped_files_count.emit(self.skipped_large_files)
             return results
 
         # 파일명과 폴더 경로 분리
@@ -664,6 +668,7 @@ class FSearchGUI(QMainWindow):
         self.search_history = SearchHistory()  # 검색 이력 관리
         self.search_start_time = None  # 검색 시작 시간
         self.search_elapsed_time = 0  # 검색 소요 시간 (초)
+        self.skipped_files_count_total = 0  # 스킵된 파일 갯수
         self.init_ui()
 
     def init_ui(self):
@@ -992,6 +997,9 @@ class FSearchGUI(QMainWindow):
         self.performance_btn.setText("⏱️ 완료시간 (진행중...)")
         self.performance_btn.setEnabled(False)
 
+        # 스킵된 파일 갯수 초기화
+        self.skipped_files_count_total = 0
+
         # 검색 시작
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
@@ -1021,6 +1029,7 @@ class FSearchGUI(QMainWindow):
         self.search_worker.excluded_files_updated.connect(self.update_excluded_files)
         self.search_worker.file_processing.connect(self.update_current_file)  # 현재 처리 중인 파일
         self.search_worker.no_match_files_updated.connect(self.update_no_match_files)  # 검색어 미포함 파일
+        self.search_worker.skipped_files_count.connect(self.update_skipped_files_count)  # 스킵된 파일 갯수
 
         # 로깅
         self.logger.info(f"검색 시작 - 경로: {path}, 검색어: {keyword}")
@@ -1030,6 +1039,10 @@ class FSearchGUI(QMainWindow):
     def update_progress(self, value):
         """진행바 업데이트"""
         self.progress_bar.setValue(value)
+
+    def update_skipped_files_count(self, count):
+        """스킵된 파일 갯수 업데이트"""
+        self.skipped_files_count_total = count
 
     def add_result_row(self, result):
         """테이블에 결과 행 추가 (실시간)"""
@@ -1229,8 +1242,12 @@ class FSearchGUI(QMainWindow):
         # 읽은 파일 버튼 업데이트
         self.read_files_btn.setText(f"🔍 찾은 파일 수 ({len(self.read_files)})")
 
+        # 상태 메시지 업데이트 - 스킵된 파일 정보 포함
+        skip_info = f" (스킵: {self.skipped_files_count_total}개 대용량파일)" if self.skipped_files_count_total > 0 else ""
+        self.status_label.setText(f"✅ 검색 완료: {len(results)}개 결과{skip_info}")
+
         # 로깅 - 검색 결과
-        self.logger.info(f"검색 완료 - 총 {len(results)}개 결과 (파일: {len(file_counts)}개)")
+        self.logger.info(f"검색 완료 - 총 {len(results)}개 결과 (파일: {len(file_counts)}개, 스킵: {self.skipped_files_count_total}개)")
 
     def _highlight_keyword(self, text: str, keyword: str, use_regex: bool) -> str:
         """텍스트에서 검색어를 HTML 굵게 + 빨간색으로 표기"""
