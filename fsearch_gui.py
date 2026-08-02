@@ -713,14 +713,14 @@ class FSearchGUI(QMainWindow):
         # ===== 경로 제외 영역 + 자주 제외하는 폴더 통계 (같은 행) =====
         combined_container = QWidget()
         combined_layout = QHBoxLayout(combined_container)
-        combined_layout.setContentsMargins(0, 0, 0, 0)
+        combined_layout.setContentsMargins(0, 1, 0, 1)
         combined_layout.setSpacing(0)
 
         # --- 경로 제외 영역 ---
         exclude_container = QWidget()
         self.exclude_layout = QHBoxLayout(exclude_container)
-        self.exclude_layout.setContentsMargins(0, 3, 0, 3)
-        self.exclude_layout.setSpacing(8)
+        self.exclude_layout.setContentsMargins(0, 2, 0, 2)
+        self.exclude_layout.setSpacing(5)
 
         exclude_label = QLabel("제외 폴더:")
         self.exclude_layout.addWidget(exclude_label)
@@ -744,8 +744,8 @@ class FSearchGUI(QMainWindow):
         # --- 자주 제외하는 폴더 통계 영역 ---
         stats_container = QWidget()
         stats_layout = QHBoxLayout(stats_container)
-        stats_layout.setContentsMargins(0, 3, 0, 3)
-        stats_layout.setSpacing(8)
+        stats_layout.setContentsMargins(0, 2, 0, 2)
+        stats_layout.setSpacing(5)
 
         stats_label = QLabel("📊 자주 제외하는 폴더:")
         stats_layout.addWidget(stats_label)
