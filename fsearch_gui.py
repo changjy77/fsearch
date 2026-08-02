@@ -604,12 +604,12 @@ class FSearchGUI(QMainWindow):
         self.excluded_btn.setMaximumHeight(25)
         options2_layout.addWidget(self.excluded_btn)
 
-        self.read_files_btn = QPushButton("📖 읽은 파일 (0)")
+        self.read_files_btn = QPushButton("🔍 찾은 파일 수 (0)")
         self.read_files_btn.clicked.connect(self.show_read_files)
         self.read_files_btn.setMaximumHeight(25)
         options2_layout.addWidget(self.read_files_btn)
 
-        self.no_match_files_btn = QPushButton("❌ 검색어 미포함 (0)")
+        self.no_match_files_btn = QPushButton("❌ 검색어 미포함 파일 수 (0)")
         self.no_match_files_btn.clicked.connect(self.show_no_match_files)
         self.no_match_files_btn.setMaximumHeight(25)
         options2_layout.addWidget(self.no_match_files_btn)
@@ -821,7 +821,7 @@ class FSearchGUI(QMainWindow):
                 self.no_match_files.append(file_path)
 
         # 버튼 텍스트 업데이트
-        self.no_match_files_btn.setText(f"❌ 검색어 미포함 ({len(self.no_match_files)})")
+        self.no_match_files_btn.setText(f"❌ 검색어 미포함 파일 수 ({len(self.no_match_files)})")
 
     def search_finished(self, results):
         """검색 완료"""
@@ -905,7 +905,7 @@ class FSearchGUI(QMainWindow):
                 self.read_files.append(file_path)
 
         # 읽은 파일 버튼 업데이트
-        self.read_files_btn.setText(f"📖 읽은 파일 ({len(self.read_files)})")
+        self.read_files_btn.setText(f"🔍 찾은 파일 수 ({len(self.read_files)})")
 
         # 로깅 - 검색 결과
         self.logger.info(f"검색 완료 - 총 {len(results)}개 결과 (파일: {len(file_counts)}개)")
@@ -1000,19 +1000,19 @@ class FSearchGUI(QMainWindow):
     def show_read_files(self):
         """읽은 파일 목록 보기"""
         if not self.read_files:
-            QMessageBox.information(self, "읽은 파일", "읽은 파일이 없습니다.\n\n먼저 검색을 실행해주세요.")
+            QMessageBox.information(self, "찾은 파일 수", "찾은 파일이 없습니다.\n\n먼저 검색을 실행해주세요.")
             return
 
         # 읽은 파일 목록을 보여주는 윈도우
         from PyQt5.QtWidgets import QDialog
         dialog = QDialog(self)
-        dialog.setWindowTitle("📖 읽은 파일 목록")
+        dialog.setWindowTitle("🔍 찾은 파일 수")
         dialog.setGeometry(200, 200, 800, 600)
 
         layout = QVBoxLayout(dialog)
 
         # 통계 정보
-        info_label = QLabel(f"총 {len(self.read_files)}개의 파일을 읽었습니다. (누적)")
+        info_label = QLabel(f"검색어를 찾은 파일 {len(self.read_files)}개 (누적)")
         layout.addWidget(info_label)
 
         # 읽은 파일 목록
@@ -1034,19 +1034,19 @@ class FSearchGUI(QMainWindow):
     def show_no_match_files(self):
         """검색어 미포함 파일 목록 보기"""
         if not self.no_match_files:
-            QMessageBox.information(self, "검색어 미포함", "검색어 미포함 파일이 없습니다.\n\n먼저 검색을 실행해주세요.")
+            QMessageBox.information(self, "검색어 미포함 파일 수", "검색어 미포함 파일이 없습니다.\n\n먼저 검색을 실행해주세요.")
             return
 
         # 검색어 미포함 파일 목록을 보여주는 윈도우
         from PyQt5.QtWidgets import QDialog
         dialog = QDialog(self)
-        dialog.setWindowTitle("❌ 검색어 미포함 파일 목록")
+        dialog.setWindowTitle("❌ 검색어 미포함 파일 수")
         dialog.setGeometry(200, 200, 800, 600)
 
         layout = QVBoxLayout(dialog)
 
         # 통계 정보
-        info_label = QLabel(f"총 {len(self.no_match_files)}개의 파일에서 검색어를 찾지 못했습니다. (누적)")
+        info_label = QLabel(f"검색어를 찾지 못한 파일 {len(self.no_match_files)}개 (누적)")
         layout.addWidget(info_label)
 
         # 검색어 미포함 파일 목록
