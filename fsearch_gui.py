@@ -734,12 +734,9 @@ class FSearchGUI(QMainWindow):
         # 제외 폴더 체크박스 저장소
         self.exclude_checkboxes = {}
 
-        self.exclude_layout.addStretch()
-
         exclude_container.setMaximumHeight(30)
 
-        combined_layout.addWidget(exclude_container, 1)
-
+        combined_layout.addWidget(exclude_container)
 
         # --- 자주 제외하는 폴더 통계 영역 ---
         stats_container = QWidget()
@@ -755,11 +752,12 @@ class FSearchGUI(QMainWindow):
         self.update_excluded_stats_display()
         stats_layout.addWidget(self.stats_label)
 
-        stats_layout.addStretch()
-
         stats_container.setMaximumHeight(30)
 
-        combined_layout.addWidget(stats_container, 1)
+        combined_layout.addWidget(stats_container)
+
+        # 남은 공간 채우기
+        combined_layout.addStretch()
 
         combined_container.setMaximumHeight(30)
         layout.addWidget(combined_container)
