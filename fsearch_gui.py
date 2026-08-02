@@ -710,7 +710,13 @@ class FSearchGUI(QMainWindow):
 
         layout.addLayout(options_layout)
 
-        # ===== 경로 제외 영역 =====
+        # ===== 경로 제외 영역 + 자주 제외하는 폴더 통계 (같은 행) =====
+        combined_container = QWidget()
+        combined_layout = QHBoxLayout(combined_container)
+        combined_layout.setContentsMargins(0, 0, 0, 0)
+        combined_layout.setSpacing(0)
+
+        # --- 경로 제외 영역 ---
         exclude_container = QWidget()
         self.exclude_layout = QHBoxLayout(exclude_container)
         self.exclude_layout.setContentsMargins(0, 3, 0, 3)
@@ -731,9 +737,16 @@ class FSearchGUI(QMainWindow):
         self.exclude_layout.addStretch()
 
         exclude_container.setMaximumHeight(30)
-        layout.addWidget(exclude_container)
 
-        # ===== 자주 제외하는 폴더 통계 영역 =====
+        combined_layout.addWidget(exclude_container, 1)
+
+        # 1센티미터 공간 추가 (약 28픽셀)
+        spacer = QLabel()
+        spacer.setMinimumWidth(28)
+        spacer.setMaximumWidth(28)
+        combined_layout.addWidget(spacer)
+
+        # --- 자주 제외하는 폴더 통계 영역 ---
         stats_container = QWidget()
         stats_layout = QHBoxLayout(stats_container)
         stats_layout.setContentsMargins(0, 3, 0, 3)
@@ -749,8 +762,12 @@ class FSearchGUI(QMainWindow):
 
         stats_layout.addStretch()
 
-        stats_container.setMaximumHeight(25)
-        layout.addWidget(stats_container)
+        stats_container.setMaximumHeight(30)
+
+        combined_layout.addWidget(stats_container, 1)
+
+        combined_container.setMaximumHeight(30)
+        layout.addWidget(combined_container)
 
         # ===== 추가 옵션 영역 =====
         options2_container = QWidget()
