@@ -494,6 +494,7 @@ class FSearchGUI(QMainWindow):
         self.search_worker = None
         self.results = []
         self.excluded_files = []  # 제외된 파일 목록
+        self.read_files = []  # 읽은 파일 목록 (누적)
         self.logger = setup_logging()  # 로깅 설정
         self.init_ui()
 
@@ -595,6 +596,11 @@ class FSearchGUI(QMainWindow):
         self.excluded_btn.clicked.connect(self.show_excluded_files)
         self.excluded_btn.setMaximumHeight(25)
         options2_layout.addWidget(self.excluded_btn)
+
+        self.read_files_btn = QPushButton("📖 읽은 파일 (0)")
+        self.read_files_btn.clicked.connect(self.show_read_files)
+        self.read_files_btn.setMaximumHeight(25)
+        options2_layout.addWidget(self.read_files_btn)
 
         options2_layout.addStretch()
         options2_container.setMaximumHeight(30)
@@ -870,6 +876,14 @@ class FSearchGUI(QMainWindow):
 
         self.result_count.setText(f"결과: {len(results)}개 (파일: {len(file_counts)}개)")
 
+        # 읽은 파일 누적 (중복 제거)
+        for file_path in file_counts.keys():
+            if file_path not in self.read_files:
+                self.read_files.append(file_path)
+
+        # 읽은 파일 버튼 업데이트
+        self.read_files_btn.setText(f"📖 읽은 파일 ({len(self.read_files)})")
+
         # 로깅 - 검색 결과
         self.logger.info(f"검색 완료 - 총 {len(results)}개 결과 (파일: {len(file_counts)}개)")
 
@@ -951,6 +965,40 @@ class FSearchGUI(QMainWindow):
 
         excluded_text = "\n".join(self.excluded_files)
         text_edit.setText(excluded_text)
+        layout.addWidget(text_edit)
+
+        # 닫기 버튼
+        close_btn = QPushButton("닫기")
+        close_btn.clicked.connect(dialog.close)
+        layout.addWidget(close_btn)
+
+        dialog.exec_()
+
+    def show_read_files(self):
+        """읽은 파일 목록 보기"""
+        if not self.read_files:
+            QMessageBox.information(self, "읽은 파일", "읽은 파일이 없습니다.\n\n먼저 검색을 실행해주세요.")
+            return
+
+        # 읽은 파일 목록을 보여주는 윈도우
+        from PyQt5.QtWidgets import QDialog
+        dialog = QDialog(self)
+        dialog.setWindowTitle("📖 읽은 파일 목록")
+        dialog.setGeometry(200, 200, 800, 600)
+
+        layout = QVBoxLayout(dialog)
+
+        # 통계 정보
+        info_label = QLabel(f"총 {len(self.read_files)}개의 파일을 읽었습니다. (누적)")
+        layout.addWidget(info_label)
+
+        # 읽은 파일 목록
+        text_edit = QTextEdit()
+        text_edit.setReadOnly(True)
+        text_edit.setFont(QFont("Consolas", 9))
+
+        read_text = "\n".join(self.read_files)
+        text_edit.setText(read_text)
         layout.addWidget(text_edit)
 
         # 닫기 버튼
