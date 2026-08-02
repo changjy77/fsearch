@@ -831,7 +831,7 @@ class FSearchGUI(QMainWindow):
         self.table.setItem(current_row_count, 3, modified_item)
         self.table.setItem(current_row_count, 4, match_count_item)
 
-        # 검색어 강조 표시 (굵게 + 빨간색)
+        # 검색어 강조 표시 (검색어만 굵게 + 빨간색)
         if hasattr(self, 'current_keyword') and self.current_keyword:
             keyword = self.current_keyword
             keyword_lower = keyword.lower() if not self.current_regex else keyword
@@ -840,24 +840,18 @@ class FSearchGUI(QMainWindow):
                 item = self.table.item(current_row_count, col)
                 if item:
                     text = item.text()
-                    # 검색 단어 찾기
-                    found = False
-                    if self.current_regex:
-                        try:
-                            if re.search(keyword, text, re.IGNORECASE):
-                                found = True
-                        except:
-                            pass
-                    else:
-                        if keyword_lower in text.lower():
-                            found = True
+                    # 검색 단어 찾기 및 강조
+                    highlighted_text = self._highlight_keyword(text, keyword, self.current_regex)
 
-                    # 찾으면 bold 글꼴 + 빨간색 적용
-                    if found:
-                        bold_font = QFont(item.font())
-                        bold_font.setBold(True)
-                        item.setFont(bold_font)
-                        item.setForeground(QColor('red'))
+                    # HTML이 포함된 경우 QLabel로 표시
+                    if '<span' in highlighted_text:
+                        label = QLabel()
+                        label.setText(highlighted_text)
+                        label.setStyleSheet("padding: 3px;")
+                        self.table.setCellWidget(current_row_count, col, label)
+                    else:
+                        # 검색어가 없으면 일반 아이템
+                        self.table.setItem(current_row_count, col, item)
 
         # 컬럼 너비를 내용에 맞게 자동 조정
         self.table.resizeColumnsToContents()
