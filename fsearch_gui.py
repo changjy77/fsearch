@@ -982,7 +982,7 @@ class FSearchGUI(QMainWindow):
         self.logger.info(f"검색 완료 - 총 {len(results)}개 결과 (파일: {len(file_counts)}개)")
 
     def _highlight_keyword(self, text: str, keyword: str, use_regex: bool) -> str:
-        """텍스트에서 검색어를 HTML 빨간색으로 표기"""
+        """텍스트에서 검색어를 HTML 굵게 + 빨간색으로 표기"""
         if not keyword:
             return text
 
@@ -990,14 +990,14 @@ class FSearchGUI(QMainWindow):
             try:
                 # 정규식 사용
                 pattern = re.compile(f'({keyword})', re.IGNORECASE)
-                return pattern.sub(r'<span style="color: red;">\1</span>', text)
+                return pattern.sub(r'<span style="color: red; font-weight: bold;">\1</span>', text)
             except:
                 return text
         else:
             # 일반 문자열 검색 (대소문자 무시)
-            # 모든 일치 부분을 빨간색으로 표기
+            # 모든 일치 부분을 굵게 + 빨간색으로 표기
             pattern = re.compile(f'({re.escape(keyword)})', re.IGNORECASE)
-            return pattern.sub(r'<span style="color: red;">\1</span>', text)
+            return pattern.sub(r'<span style="color: red; font-weight: bold;">\1</span>', text)
 
     def search_error(self, error):
         """검색 오류"""
