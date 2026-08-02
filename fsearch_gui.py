@@ -1007,8 +1007,7 @@ class FSearchGUI(QMainWindow):
             # 검색 워커 중단 신호
             if self.search_worker:
                 self.search_worker.stop_flag = True
-                self.search_worker.wait()  # 스레드 완전 종료 대기
-            # 상태 메시지 및 버튼 복원
+            # 상태 메시지 및 버튼 즉시 복원
             self.status_label.setText("⏹️ 검색 중단됨")
             self.search_btn.setText("🔍 검색")
             self.search_btn.setStyleSheet("")
@@ -1216,7 +1215,12 @@ class FSearchGUI(QMainWindow):
                 self.skipped_files.append(file_path)
 
     def search_finished(self, results):
-        """검색 완료"""
+        """검색 완료 또는 중단"""
+        # 이미 사용자가 중지 버튼을 눌렀으면 UI는 이미 복원됨
+        if not self.is_searching:
+            return
+
+        # 검색 완료 (중단되지 않음)
         # 완료 시간 계산
         if self.search_start_time:
             self.search_elapsed_time = time.time() - self.search_start_time
