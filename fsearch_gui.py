@@ -67,57 +67,105 @@ def setup_logging():
 
 
 class SearchHistory:
-    """검색 이력 관리 - 최대 10개 저장"""
+    """검색 이력 관리 - 검색어(최대 10개), 경로(최대 5개), 제외 폴더 통계"""
     def __init__(self):
         self.config_dir = Path.home() / ".fsearch"
         self.config_dir.mkdir(parents=True, exist_ok=True)
         self.history_file = self.config_dir / "search_history.json"
-        self.history = self._load_history()
+        self.data = self._load_data()
 
-    def _load_history(self):
-        """저장된 검색 이력 로드"""
+    def _load_data(self):
+        """저장된 데이터 로드"""
         if self.history_file.exists():
             try:
                 with open(self.history_file, 'r', encoding='utf-8') as f:
                     return json.load(f)
             except:
-                return []
-        return []
+                pass
+        return {
+            'keywords': [],
+            'paths': [],
+            'excluded_stats': {}
+        }
 
-    def _save_history(self):
-        """검색 이력 저장"""
+    def _save_data(self):
+        """데이터 저장"""
         try:
             with open(self.history_file, 'w', encoding='utf-8') as f:
-                json.dump(self.history, f, ensure_ascii=False, indent=2)
+                json.dump(self.data, f, ensure_ascii=False, indent=2)
         except:
             pass
 
-    def add(self, keyword):
+    def add_keyword(self, keyword):
         """검색어 추가 (중복 제거, 최대 10개)"""
         if not keyword or not keyword.strip():
             return
 
         keyword = keyword.strip()
+        keywords = self.data.get('keywords', [])
+
         # 중복 제거
-        if keyword in self.history:
-            self.history.remove(keyword)
+        if keyword in keywords:
+            keywords.remove(keyword)
 
         # 맨 앞에 추가
-        self.history.insert(0, keyword)
+        keywords.insert(0, keyword)
 
         # 최대 10개 유지
-        self.history = self.history[:10]
+        self.data['keywords'] = keywords[:10]
 
-        self._save_history()
+        self._save_data()
 
-    def get_all(self):
-        """모든 검색 이력 반환"""
-        return self.history
+    def add_path(self, path):
+        """검색 경로 추가 (중복 제거, 최대 5개)"""
+        if not path or not path.strip():
+            return
 
-    def clear(self):
-        """검색 이력 삭제"""
-        self.history = []
-        self._save_history()
+        path = path.strip()
+        paths = self.data.get('paths', [])
+
+        # 중복 제거
+        if path in paths:
+            paths.remove(path)
+
+        # 맨 앞에 추가
+        paths.insert(0, path)
+
+        # 최대 5개 유지
+        self.data['paths'] = paths[:5]
+
+        self._save_data()
+
+    def add_excluded_folder(self, folder_path):
+        """제외 폴더 통계 기록"""
+        if not folder_path:
+            return
+
+        stats = self.data.get('excluded_stats', {})
+        stats[folder_path] = stats.get(folder_path, 0) + 1
+        self.data['excluded_stats'] = stats
+
+        self._save_data()
+
+    def get_keywords(self):
+        """모든 검색 키워드 반환"""
+        return self.data.get('keywords', [])
+
+    def get_paths(self):
+        """모든 검색 경로 반환"""
+        return self.data.get('paths', [])
+
+    def get_top_excluded_folders(self, limit=5):
+        """자주 제외하는 폴더 반환 (상위 N개)"""
+        stats = self.data.get('excluded_stats', {})
+        if not stats:
+            return []
+        sorted_items = sorted(stats.items(), key=lambda x: x[1], reverse=True)
+        return [folder for folder, _ in sorted_items[:limit]]
+
+    def get_excluded_stats(self):
+        """모든 제외 폴더 통계 반환"""
+        return self.data.get('excluded_stats', {})
 
 
 class SearchResultDelegate(QStyledItemDelegate):
@@ -605,11 +653,20 @@ class FSearchGUI(QMainWindow):
         # ===== 검색 옵션 영역 =====
         options_layout = QHBoxLayout()
 
-        # 경로 선택
+        # 경로 선택 (경로 이력 드롭다운)
         options_layout.addWidget(QLabel("경로:"))
-        self.path_input = QLineEdit()
-        self.path_input.setText(str(Path.cwd()))
+        self.path_input = QComboBox()
+        self.path_input.setEditable(True)
         self.path_input.setMaximumHeight(25)
+
+        # 저장된 경로 로드
+        default_path = str(Path.cwd())
+        saved_paths = self.search_history.get_paths()
+        if saved_paths:
+            self.path_input.addItems(saved_paths)
+        self.path_input.insertItem(0, default_path)
+        self.path_input.setCurrentIndex(0)
+
         options_layout.addWidget(self.path_input)
 
         browse_btn = QPushButton("찾아보기")
@@ -626,9 +683,9 @@ class FSearchGUI(QMainWindow):
         self.keyword_input.setMaximumHeight(25)
 
         # 검색 이력 로드
-        history = self.search_history.get_all()
-        if history:
-            self.keyword_input.addItems(history)
+        keywords = self.search_history.get_keywords()
+        if keywords:
+            self.keyword_input.addItems(keywords)
 
         options_layout.addWidget(self.keyword_input, 2)
 
@@ -811,6 +868,9 @@ class FSearchGUI(QMainWindow):
                 )
                 self.exclude_checkboxes[full_path] = cb
 
+                # 제외 폴더 통계 기록
+                self.search_history.add_excluded_folder(full_path)
+
                 self.status_label.setText(f"✅ 제외 폴더 추가됨: {folder_name}")
             else:
                 QMessageBox.information(self, "알림", "이미 추가된 폴더입니다.")
@@ -819,7 +879,8 @@ class FSearchGUI(QMainWindow):
         """폴더 선택 대화창"""
         folder = QFileDialog.getExistingDirectory(self, "폴더 선택")
         if folder:
-            self.path_input.setText(folder)
+            self.path_input.setCurrentText(folder)
+            self.search_history.add_path(folder)
 
     def search(self):
         """검색 실행"""
@@ -828,13 +889,16 @@ class FSearchGUI(QMainWindow):
             QMessageBox.warning(self, "입력 오류", "검색어를 입력하세요.")
             return
 
-        path = self.path_input.text().strip()
+        path = self.path_input.currentText().strip()
         if not Path(path).exists():
             QMessageBox.warning(self, "경로 오류", "경로가 존재하지 않습니다.")
             return
 
         # 검색 이력에 저장 (최대 10개)
-        self.search_history.add(keyword)
+        self.search_history.add_keyword(keyword)
+
+        # 검색 경로 저장 (최대 5개)
+        self.search_history.add_path(path)
 
         # 현재 검색 단어 저장
         self.current_keyword = keyword
