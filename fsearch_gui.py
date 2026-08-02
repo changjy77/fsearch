@@ -522,8 +522,8 @@ class SearchWorker(QThread):
             file_size = 0
             mod_time = "Unknown"
 
-        # 대용량 파일 스킵 (1MB 이상)
-        if self.skip_large_files and file_size > 1 * 1024 * 1024:
+        # 대용량 파일 스킵 (10MB 이상)
+        if self.skip_large_files and file_size > 10 * 1024 * 1024:
             self.skipped_large_files += 1
             self.skipped_files_list.append(str(file_path))
             self.skipped_files_count.emit(self.skipped_large_files)
@@ -797,7 +797,7 @@ class FSearchGUI(QMainWindow):
         self.content_only_cb.setMaximumHeight(25)
         self.regex_cb = QCheckBox("정규식")
         self.regex_cb.setMaximumHeight(25)
-        self.skip_large_cb = QCheckBox("대용량파일 스킵(>1MB)")
+        self.skip_large_cb = QCheckBox("대용량파일 스킵(>10MB)")
         self.skip_large_cb.setMaximumHeight(25)
 
         options2_layout.addWidget(self.name_only_cb)
@@ -1471,7 +1471,7 @@ class FSearchGUI(QMainWindow):
         layout = QVBoxLayout(dialog)
 
         # 통계 정보
-        info_label = QLabel(f"1MB 이상 대용량파일 {len(self.skipped_files)}개 (누적)")
+        info_label = QLabel(f"10MB 이상 대용량파일 {len(self.skipped_files)}개 (누적)")
         layout.addWidget(info_label)
 
         # 스킵된 파일 목록
