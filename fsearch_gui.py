@@ -1397,10 +1397,9 @@ class FSearchGUI(QMainWindow):
         """캐시 새로고침"""
         QMessageBox.information(self, "캐시", "검색 시 파일 목록이 새로 수집됩니다.")
 
-    def open_file(self, item):
-        """파일 또는 폴더 열기"""
-        row = self.table.row(item)
-        # 해당 행의 결과에서 full_path 찾기
+    def open_file(self, row, column):
+        """파일 또는 폴더 열기 (더블클릭 시 호출)"""
+        # 유효한 행 확인
         if row < 0 or row >= len(self.results):
             return
 
