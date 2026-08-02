@@ -1176,8 +1176,13 @@ class FSearchGUI(QMainWindow):
         for row in range(self.table.rowCount()):
             row_data = []
             for col in range(self.table.columnCount()):
-                item = self.table.item(row, col)
-                row_data.append(item.text() if item else "")
+                # setCellWidget으로 추가된 위젯도 확인
+                widget = self.table.cellWidget(row, col)
+                if widget:
+                    row_data.append(widget)
+                else:
+                    item = self.table.item(row, col)
+                    row_data.append(item.text() if item else "")
             table_data.append(row_data)
 
         # 검색 단어수로 정렬된 순서대로 테이블 다시 작성
@@ -1186,16 +1191,23 @@ class FSearchGUI(QMainWindow):
             self.table.insertRow(self.table.rowCount())
             new_row = self.table.rowCount() - 1
             for col in range(len(table_data[row])):
-                item = QTableWidgetItem(table_data[row][col])
-                if col == 0:  # 파일명 (왼쪽 정렬)
-                    item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-                elif col == 1:  # 경로 (왼쪽 정렬)
-                    item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-                elif col == 2 or col == 4:  # 크기, 검색 단어수 (오른쪽 정렬)
-                    item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                else:  # 수정 날짜 (왼쪽 정렬)
-                    item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-                self.table.setItem(new_row, col, item)
+                data = table_data[row][col]
+
+                # QLabel 위젯인 경우
+                if isinstance(data, QLabel):
+                    self.table.setCellWidget(new_row, col, data)
+                else:
+                    # 일반 텍스트인 경우
+                    item = QTableWidgetItem(data)
+                    if col == 0:  # 파일명 (왼쪽 정렬)
+                        item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                    elif col == 1:  # 경로 (왼쪽 정렬)
+                        item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                    elif col == 2 or col == 4:  # 크기, 검색 단어수 (오른쪽 정렬)
+                        item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                    else:  # 수정 날짜 (왼쪽 정렬)
+                        item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                    self.table.setItem(new_row, col, item)
 
 
 def main():
