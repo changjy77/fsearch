@@ -292,6 +292,7 @@ class SearchWorker(QThread):
         self.file_cache = {}  # 실시간 캐싱: 파일 경로 → 텍스트
         self.skipped_large_files = 0  # 스킵된 대용량 파일 갯수
         self.skipped_files_list = []  # 스킵된 대용량파일 목록
+        self.stop_flag = False  # 검색 중단 플래그
 
     def run(self):
         """검색 실행"""
@@ -325,6 +326,13 @@ class SearchWorker(QThread):
                 futures = {executor.submit(self._search_file, f, regex): f for f in files}
 
                 for future in as_completed(futures):
+                    # 중단 플래그 확인
+                    if self.stop_flag:
+                        executor.shutdown(wait=False)
+                        self.status.emit("⏹️ 검색 중단됨")
+                        self.finished.emit(results)
+                        return
+
                     try:
                         file_results = future.result()
                         results.extend(file_results)
@@ -369,6 +377,10 @@ class SearchWorker(QThread):
         excluded_paths = {Path(excluded).resolve() for excluded in self.ignore_dirs}
 
         for root, dirs, filenames in os.walk(self.path):
+            # 중단 플래그 확인
+            if self.stop_flag:
+                return files
+
             # 제외할 폴더 필터링 - 전체 경로로 비교
             dirs_to_remove = []
             for d in dirs:
@@ -664,6 +676,7 @@ class FSearchGUI(QMainWindow):
     def __init__(self):
         super().__init__()
         self.search_worker = None
+        self.is_searching = False  # 검색 진행 중 플래그
         self.results = []
         self.excluded_files = []  # 제외된 파일 목록
         self.read_files = []  # 읽은 파일 목록 (누적)
@@ -727,10 +740,10 @@ class FSearchGUI(QMainWindow):
 
         options_layout.addWidget(self.keyword_input, 2)
 
-        search_btn = QPushButton("🔍 검색")
-        search_btn.clicked.connect(self.search)
-        search_btn.setMaximumHeight(25)
-        options_layout.addWidget(search_btn)
+        self.search_btn = QPushButton("🔍 검색")
+        self.search_btn.clicked.connect(self.search)
+        self.search_btn.setMaximumHeight(25)
+        options_layout.addWidget(self.search_btn)
 
         layout.addLayout(options_layout)
 
@@ -982,7 +995,15 @@ class FSearchGUI(QMainWindow):
             self.search_history.add_path(folder)
 
     def search(self):
-        """검색 실행"""
+        """검색 실행 또는 중지"""
+        # 검색 중이면 중지
+        if self.is_searching:
+            self.is_searching = False
+            if self.search_worker:
+                self.search_worker.stop_flag = True
+            self.search_btn.setText("🔍 검색")
+            return
+
         keyword = self.keyword_input.currentText().strip()
         if not keyword:
             QMessageBox.warning(self, "입력 오류", "검색어를 입력하세요.")
@@ -1058,6 +1079,9 @@ class FSearchGUI(QMainWindow):
         # 로깅
         self.logger.info(f"검색 시작 - 경로: {path}, 검색어: {keyword}")
 
+        # 검색 시작 - 버튼 텍스트 변경
+        self.is_searching = True
+        self.search_btn.setText("⏹️ 중지")
         self.search_worker.start()
 
     def update_progress(self, value):
@@ -1177,6 +1201,10 @@ class FSearchGUI(QMainWindow):
             self.search_elapsed_time = time.time() - self.search_start_time
             self.performance_btn.setText(f"⏱️ 완료시간 ({self.search_elapsed_time:.2f}초)")
             self.performance_btn.setEnabled(True)
+
+        # 검색 상태 복원
+        self.is_searching = False
+        self.search_btn.setText("🔍 검색")
 
         self.results = results
         self.progress_bar.setVisible(False)
@@ -1304,6 +1332,9 @@ class FSearchGUI(QMainWindow):
     def search_error(self, error):
         """검색 오류"""
         self.progress_bar.setVisible(False)
+        # 검색 상태 복원
+        self.is_searching = False
+        self.search_btn.setText("🔍 검색")
         QMessageBox.critical(self, "오류", error)
         self.status_label.setText("오류 발생")
         # 로깅
