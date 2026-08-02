@@ -230,7 +230,7 @@ class SearchWorker(QThread):
         # 허용된 파일 확장자
         allowed_extensions = {
             '.doc', '.docx',      # 워드파일
-            '.hwp',               # 한글파일
+            '.hwp', '.hwpx',      # 한글파일
             '.pdf',               # PDF파일
             '.xls', '.xlsx',      # 엑셀파일
             '.txt',               # 텍스트파일
@@ -344,12 +344,12 @@ class SearchWorker(QThread):
                 except:
                     return ""
 
-            elif ext == '.hwp':
-                # 한글 파일 (.hwp)
+            elif ext in ['.hwp', '.hwpx']:
+                # 한글 파일 (.hwp, .hwpx)
                 try:
                     text = ""
                     with zipfile.ZipFile(file_path, 'r') as hwp:
-                        # HWP 파일의 XML 콘텐츠 추출
+                        # HWP/HWPX 파일의 XML 콘텐츠 추출
                         file_list = hwp.namelist()
 
                         # Contents 폴더의 Section 파일들에서 텍스트 추출
@@ -459,6 +459,8 @@ class SearchWorker(QThread):
             '.pdf': '📕',
             '.doc': '📘',
             '.docx': '📘',
+            '.hwp': '📗',
+            '.hwpx': '📗',
             '.xls': '📊',
             '.xlsx': '📊',
             '.csv': '📋',
