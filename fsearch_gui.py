@@ -650,6 +650,8 @@ class FSearchGUI(QMainWindow):
         self.no_match_files = []  # 검색어 미포함 파일 목록 (누적)
         self.logger = setup_logging()  # 로깅 설정
         self.search_history = SearchHistory()  # 검색 이력 관리
+        self.search_start_time = None  # 검색 시작 시간
+        self.search_elapsed_time = 0  # 검색 소요 시간 (초)
         self.init_ui()
 
     def init_ui(self):
@@ -805,6 +807,11 @@ class FSearchGUI(QMainWindow):
         self.no_match_files_btn.clicked.connect(self.show_no_match_files)
         self.no_match_files_btn.setMaximumHeight(25)
         options2_layout.addWidget(self.no_match_files_btn)
+
+        self.performance_btn = QPushButton("⏱️ 완료시간 (0.00초)")
+        self.performance_btn.setMaximumHeight(25)
+        self.performance_btn.setEnabled(False)
+        options2_layout.addWidget(self.performance_btn)
 
         options2_layout.addStretch()
         options2_container.setMaximumHeight(30)
@@ -965,6 +972,11 @@ class FSearchGUI(QMainWindow):
         self.current_keyword = keyword
         self.current_regex = self.regex_cb.isChecked()
 
+        # 검색 시작 시간 기록
+        self.search_start_time = time.time()
+        self.performance_btn.setText("⏱️ 완료시간 (진행중...)")
+        self.performance_btn.setEnabled(False)
+
         # 검색 시작
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
@@ -1100,6 +1112,12 @@ class FSearchGUI(QMainWindow):
 
     def search_finished(self, results):
         """검색 완료"""
+        # 완료 시간 계산
+        if self.search_start_time:
+            self.search_elapsed_time = time.time() - self.search_start_time
+            self.performance_btn.setText(f"⏱️ 완료시간 ({self.search_elapsed_time:.2f}초)")
+            self.performance_btn.setEnabled(True)
+
         self.results = results
         self.progress_bar.setVisible(False)
 
