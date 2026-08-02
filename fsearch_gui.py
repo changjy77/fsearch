@@ -688,6 +688,9 @@ class FSearchGUI(QMainWindow):
         self.text_output.setFont(font)
         self.tabs.addTab(self.text_output, "📋 결과 (텍스트)")
 
+        # 탭 색상 변경 신호 연결
+        self.tabs.currentChanged.connect(self.on_tab_changed)
+
         layout.addWidget(self.tabs, 1)
 
         # ===== 푸터 =====
@@ -700,6 +703,9 @@ class FSearchGUI(QMainWindow):
         footer_layout.addWidget(QLabel("fsearch v2.0 - GUI Edition"))
         footer_container.setMaximumHeight(20)
         layout.addWidget(footer_container)
+
+        # 초기 탭 색상 설정
+        self.on_tab_changed(0)
 
     def add_exclude_folder(self):
         """제외할 폴더 추가"""
@@ -1006,6 +1012,15 @@ class FSearchGUI(QMainWindow):
         self.status_label.setText("오류 발생")
         # 로깅
         self.logger.error(f"검색 오류: {error}")
+
+    def on_tab_changed(self, index):
+        """탭 변경 시 선택된 탭을 붉은색으로 표기"""
+        for i in range(self.tabs.count()):
+            # 모든 탭을 기본 색상으로 설정
+            self.tabs.tabBar().setTabTextColor(i, QColor('black'))
+
+        # 선택된 탭을 빨간색으로 설정
+        self.tabs.tabBar().setTabTextColor(index, QColor('red'))
 
     def refresh_cache(self):
         """캐시 새로고침"""
