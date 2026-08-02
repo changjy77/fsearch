@@ -519,8 +519,8 @@ class SearchWorker(QThread):
             file_size = 0
             mod_time = "Unknown"
 
-        # 대용량 파일 스킵 (100MB 이상)
-        if self.skip_large_files and file_size > 100 * 1024 * 1024:
+        # 대용량 파일 스킵 (5MB 이상)
+        if self.skip_large_files and file_size > 5 * 1024 * 1024:
             self.skipped_large_files += 1
             self.skipped_files_count.emit(self.skipped_large_files)
             return results
@@ -792,7 +792,7 @@ class FSearchGUI(QMainWindow):
         self.content_only_cb.setMaximumHeight(25)
         self.regex_cb = QCheckBox("정규식")
         self.regex_cb.setMaximumHeight(25)
-        self.skip_large_cb = QCheckBox("대용량파일 스킵(>100MB)")
+        self.skip_large_cb = QCheckBox("대용량파일 스킵(>5MB)")
         self.skip_large_cb.setMaximumHeight(25)
 
         options2_layout.addWidget(self.name_only_cb)
