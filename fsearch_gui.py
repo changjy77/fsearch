@@ -1165,11 +1165,13 @@ class FSearchGUI(QMainWindow):
                 filename_item = QTableWidgetItem(filename_text)
                 filename_item.setToolTip(result['full_path'])
                 filename_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                filename_item.setData(Qt.UserRole, result['full_path'])  # ✅ 파일 경로 저장
                 self.table.setItem(current_row_count, 0, filename_item)
         else:
             filename_item = QTableWidgetItem(filename_text)
             filename_item.setToolTip(result['full_path'])
             filename_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            filename_item.setData(Qt.UserRole, result['full_path'])  # ✅ 파일 경로 저장
             self.table.setItem(current_row_count, 0, filename_item)
 
         # 1: 경로 (검색어 강조 표시)
@@ -1186,28 +1188,33 @@ class FSearchGUI(QMainWindow):
                 path_item = QTableWidgetItem(path_text)
                 path_item.setToolTip(path_text)
                 path_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                path_item.setData(Qt.UserRole, result['full_path'])  # ✅ 파일 경로 저장
                 self.table.setItem(current_row_count, 1, path_item)
         else:
             path_item = QTableWidgetItem(path_text)
             path_item.setToolTip(path_text)
             path_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            path_item.setData(Qt.UserRole, result['full_path'])  # ✅ 파일 경로 저장
             self.table.setItem(current_row_count, 1, path_item)
 
         # 2: 크기 (오른쪽 정렬 - 숫자)
         size_item = QTableWidgetItem(size_str)
         size_item.setToolTip(str(result['size']) + " bytes")
         size_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        size_item.setData(Qt.UserRole, result['full_path'])  # ✅ 파일 경로 저장
         self.table.setItem(current_row_count, 2, size_item)
 
         # 3: 수정 날짜 (왼쪽 정렬)
         modified_item = QTableWidgetItem(result['modified'])
         modified_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        modified_item.setData(Qt.UserRole, result['full_path'])  # ✅ 파일 경로 저장
         self.table.setItem(current_row_count, 3, modified_item)
 
         # 4: 검색 단어수 (오른쪽 정렬 - 숫자)
         match_count = result.get('match_count', 0)
         match_count_item = QTableWidgetItem(str(match_count))
         match_count_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        match_count_item.setData(Qt.UserRole, result['full_path'])  # ✅ 파일 경로 저장
         self.table.setItem(current_row_count, 4, match_count_item)
 
         # 컬럼 너비를 내용에 맞게 자동 조정
@@ -1259,9 +1266,6 @@ class FSearchGUI(QMainWindow):
 
         self.results = results
         self.progress_bar.setVisible(False)
-
-        # 테이블 셀 더블클릭 시 파일 실행
-        self.table.itemDoubleClicked.connect(self.open_file)
 
         # 검색 단어를 포함하는 셀을 굵게 표시 + 빨간색
         if hasattr(self, 'current_keyword'):
@@ -1400,11 +1404,20 @@ class FSearchGUI(QMainWindow):
     def open_file(self, row, column):
         """파일 또는 폴더 열기 (더블클릭 시 호출)"""
         # 유효한 행 확인
-        if row < 0 or row >= len(self.results):
+        if row < 0 or row >= self.table.rowCount():
             return
 
-        result = self.results[row]
-        file_path = result.get('full_path') or result.get('path')
+        # 테이블 아이템에서 파일 경로 가져오기
+        item = self.table.item(row, column)
+        if not item:
+            return
+
+        file_path = item.data(Qt.UserRole)
+
+        # 파일 경로가 없으면 fallback으로 self.results에서 가져오기
+        if not file_path and row < len(self.results):
+            result = self.results[row]
+            file_path = result.get('full_path') or result.get('path')
 
         if not file_path or not Path(file_path).exists():
             QMessageBox.warning(self, "오류", "파일을 찾을 수 없습니다.")
