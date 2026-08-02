@@ -1000,12 +1000,22 @@ class FSearchGUI(QMainWindow):
         # 스킵된 파일 갯수 초기화
         self.skipped_files_count_total = 0
 
-        # 검색 시작
+        # 검색 시작 - 이전 결과 모두 초기화
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
         self.table.setRowCount(0)
         self.text_output.clear()
         self.results = []
+
+        # 이전 검색 결과 초기화
+        self.excluded_files = []
+        self.read_files = []
+        self.no_match_files = []
+
+        # 관련 버튼 초기화
+        self.excluded_btn.setText("❌ 제외된 파일 (0)")
+        self.read_files_btn.setText("🔍 찾은 파일 수 (0)")
+        self.no_match_files_btn.setText("❌ 검색어 미포함 파일 수 (0)")
 
         # 체크된 제외 폴더만 수집
         ignore_dirs = {folder for folder, cb in self.exclude_checkboxes.items() if cb.isChecked()}
