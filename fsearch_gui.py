@@ -895,6 +895,8 @@ class FSearchGUI(QMainWindow):
         self.table.horizontalHeader().setSectionResizeMode(1, 1)  # 경로: 확장 가능
         self.table.verticalHeader().setVisible(False)  # 행 번호 숨김
         self.table.setSelectionBehavior(0)  # 행 선택 모드
+        self.table.setSortingEnabled(False)  # ✅ 정렬 기능 비활성화
+        self.table.cellDoubleClicked.connect(self.open_file)  # 더블클릭 시 파일 실행
         self.tabs.addTab(self.table, "🗂️ 결과 (테이블)")
 
         # 텍스트 탭
@@ -1291,8 +1293,8 @@ class FSearchGUI(QMainWindow):
                             item.setFont(bold_font)
                             item.setForeground(QColor('red'))
 
-        # 검색 단어수로 정렬 (내림차순 - 큰 수부터)
-        self.sort_table_by_match_count()
+        # 검색 단어수로 정렬 기능 비활성화
+        # self.sort_table_by_match_count()
 
         # 컬럼 너비 자동 조정
         self.table.resizeColumnsToContents()
