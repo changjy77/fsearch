@@ -714,9 +714,6 @@ class FSearchGUI(QMainWindow):
             }
         """)
 
-        # 탭 색상 변경 신호 연결
-        self.tabs.currentChanged.connect(self.on_tab_changed)
-
         layout.addWidget(self.tabs, 1)
 
         # ===== 푸터 =====
