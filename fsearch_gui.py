@@ -688,6 +688,7 @@ class FSearchGUI(QMainWindow):
         self.search_elapsed_time = 0  # 검색 소요 시간 (초)
         self.skipped_files_count_total = 0  # 스킵된 파일 갯수
         self.blink_timer = QTimer()  # 버튼 깜박임 타이머
+        self.blink_timer.timeout.connect(self.toggle_button_blink)  # 타이머 신호 연결
         self.blink_state = False  # 깜박임 상태
         self.init_ui()
 
@@ -1010,7 +1011,7 @@ class FSearchGUI(QMainWindow):
             # 상태 메시지 및 버튼 즉시 복원
             self.status_label.setText("⏹️ 검색 중단됨")
             self.search_btn.setText("🔍 검색")
-            self.search_btn.setStyleSheet("")
+            self.search_btn.setStyleSheet("QPushButton { }")  # 기본 스타일 복원
             return
 
         keyword = self.keyword_input.currentText().strip()
@@ -1092,7 +1093,7 @@ class FSearchGUI(QMainWindow):
         self.is_searching = True
         self.search_btn.setText("⏹️ 중지")
         self.blink_state = False
-        self.blink_timer.timeout.connect(self.toggle_button_blink)
+        self.toggle_button_blink()  # 초기 상태 설정
         self.blink_timer.start(500)  # 500ms 간격으로 깜박임
         self.search_worker.start()
 
@@ -1100,9 +1101,30 @@ class FSearchGUI(QMainWindow):
         """버튼 깜박임 토글"""
         self.blink_state = not self.blink_state
         if self.blink_state:
-            self.search_btn.setStyleSheet("background-color: #FFD700; color: black; font-weight: bold;")
+            # 깜박임 ON - 밝은 색상, 굵은 글씨, 큰 크기
+            self.search_btn.setStyleSheet(
+                "QPushButton { "
+                "background-color: #FF6B6B; "
+                "color: white; "
+                "font-weight: bold; "
+                "font-size: 12px; "
+                "border: 2px solid #FF0000; "
+                "border-radius: 4px; "
+                "}"
+            )
         else:
-            self.search_btn.setStyleSheet("")
+            # 깜박임 OFF - 기본 상태
+            self.search_btn.setStyleSheet(
+                "QPushButton { "
+                "background-color: #FF6B6B; "
+                "color: white; "
+                "font-weight: bold; "
+                "font-size: 12px; "
+                "border: 2px solid #CC5555; "
+                "border-radius: 4px; "
+                "opacity: 0.5; "
+                "}"
+            )
 
     def update_progress(self, value):
         """진행바 업데이트"""
@@ -1231,7 +1253,7 @@ class FSearchGUI(QMainWindow):
         self.is_searching = False
         self.blink_timer.stop()
         self.search_btn.setText("🔍 검색")
-        self.search_btn.setStyleSheet("")
+        self.search_btn.setStyleSheet("QPushButton { }")  # 기본 스타일 복원
 
         self.results = results
         self.progress_bar.setVisible(False)
@@ -1363,7 +1385,7 @@ class FSearchGUI(QMainWindow):
         self.is_searching = False
         self.blink_timer.stop()
         self.search_btn.setText("🔍 검색")
-        self.search_btn.setStyleSheet("")
+        self.search_btn.setStyleSheet("QPushButton { }")  # 기본 스타일 복원
         QMessageBox.critical(self, "오류", error)
         self.status_label.setText("오류 발생")
         # 로깅
