@@ -896,7 +896,7 @@ class FSearchGUI(QMainWindow):
         self.table.verticalHeader().setVisible(False)  # 행 번호 숨김
         self.table.setSelectionBehavior(0)  # 행 선택 모드
         self.table.setSortingEnabled(False)  # ✅ 정렬 기능 비활성화
-        self.table.cellDoubleClicked.connect(self.open_file)  # 더블클릭 시 파일 실행
+        self.table.itemDoubleClicked.connect(self.open_file)  # 더블클릭 시 파일 실행
         self.tabs.addTab(self.table, "🗂️ 결과 (테이블)")
 
         # 텍스트 탭
@@ -1401,26 +1401,20 @@ class FSearchGUI(QMainWindow):
         """캐시 새로고침"""
         QMessageBox.information(self, "캐시", "검색 시 파일 목록이 새로 수집됩니다.")
 
-    def open_file(self, row, column):
+    def open_file(self, item):
         """파일 또는 폴더 열기 (더블클릭 시 호출)"""
-        # 유효한 행 확인
-        if row < 0 or row >= self.table.rowCount():
-            return
-
-        # 테이블 아이템에서 파일 경로 가져오기
-        item = self.table.item(row, column)
         if not item:
             return
 
+        # 테이블 아이템에서 파일 경로 가져오기
         file_path = item.data(Qt.UserRole)
 
-        # 파일 경로가 없으면 fallback으로 self.results에서 가져오기
-        if not file_path and row < len(self.results):
-            result = self.results[row]
-            file_path = result.get('full_path') or result.get('path')
+        if not file_path:
+            QMessageBox.warning(self, "오류", "파일 정보를 찾을 수 없습니다.")
+            return
 
-        if not file_path or not Path(file_path).exists():
-            QMessageBox.warning(self, "오류", "파일을 찾을 수 없습니다.")
+        if not Path(file_path).exists():
+            QMessageBox.warning(self, "오류", f"파일을 찾을 수 없습니다:\n{file_path}")
             return
 
         try:
