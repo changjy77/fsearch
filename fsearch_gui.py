@@ -733,6 +733,25 @@ class FSearchGUI(QMainWindow):
         exclude_container.setMaximumHeight(30)
         layout.addWidget(exclude_container)
 
+        # ===== 자주 제외하는 폴더 통계 영역 =====
+        stats_container = QWidget()
+        stats_layout = QHBoxLayout(stats_container)
+        stats_layout.setContentsMargins(0, 3, 0, 3)
+        stats_layout.setSpacing(8)
+
+        stats_label = QLabel("📊 자주 제외하는 폴더:")
+        stats_layout.addWidget(stats_label)
+
+        # 자주 제외하는 폴더 표시
+        self.stats_label = QLabel()
+        self.update_excluded_stats_display()
+        stats_layout.addWidget(self.stats_label)
+
+        stats_layout.addStretch()
+
+        stats_container.setMaximumHeight(25)
+        layout.addWidget(stats_container)
+
         # ===== 추가 옵션 영역 =====
         options2_container = QWidget()
         options2_layout = QHBoxLayout(options2_container)
@@ -861,6 +880,21 @@ class FSearchGUI(QMainWindow):
         footer_container.setMaximumHeight(20)
         layout.addWidget(footer_container)
 
+    def update_excluded_stats_display(self):
+        """자주 제외하는 폴더 통계 표시"""
+        top_folders = self.search_history.get_top_excluded_folders(limit=3)
+        stats = self.search_history.get_excluded_stats()
+
+        if not top_folders:
+            self.stats_label.setText("통계 없음")
+            return
+
+        # 상위 3개 폴더와 사용 횟수 표시
+        stats_text = " | ".join(
+            [f"{Path(folder).name} ({stats.get(folder, 0)}회)" for folder in top_folders]
+        )
+        self.stats_label.setText(stats_text)
+
     def add_exclude_folder(self):
         """제외할 폴더 추가"""
         folder = QFileDialog.getExistingDirectory(self, "제외할 폴더 선택")
@@ -884,6 +918,9 @@ class FSearchGUI(QMainWindow):
 
                 # 제외 폴더 통계 기록
                 self.search_history.add_excluded_folder(full_path)
+
+                # 통계 표시 업데이트
+                self.update_excluded_stats_display()
 
                 self.status_label.setText(f"✅ 제외 폴더 추가됨: {folder_name}")
             else:
