@@ -860,7 +860,7 @@ class FSearchGUI(QMainWindow):
         # 테이블 셀 더블클릭 시 파일 실행
         self.table.itemDoubleClicked.connect(self.open_file)
 
-        # 검색 단어를 포함하는 셀을 굵게 표시
+        # 검색 단어를 포함하는 셀을 굵게 표시 + 빨간색
         if hasattr(self, 'current_keyword'):
             keyword = self.current_keyword
             keyword_lower = keyword.lower() if not self.current_regex else keyword
@@ -883,11 +883,12 @@ class FSearchGUI(QMainWindow):
                             if keyword_lower in text.lower():
                                 found = True
 
-                        # 찾으면 bold 글꼴 적용
+                        # 찾으면 bold 글꼴 + 빨간색 적용
                         if found:
                             bold_font = QFont(item.font())
                             bold_font.setBold(True)
                             item.setFont(bold_font)
+                            item.setForeground(QColor('red'))
 
         # 검색 단어수로 정렬 (내림차순 - 큰 수부터)
         self.sort_table_by_match_count()
