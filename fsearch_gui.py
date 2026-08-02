@@ -9,6 +9,7 @@ import re
 import time
 import subprocess
 import logging
+import zipfile
 from datetime import datetime
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -340,6 +341,32 @@ class SearchWorker(QThread):
                                     text += str(cell.value) + " "
                                 text += "\n"
                         return text
+                except:
+                    return ""
+
+            elif ext == '.hwp':
+                # 한글 파일 (.hwp)
+                try:
+                    text = ""
+                    with zipfile.ZipFile(file_path, 'r') as hwp:
+                        # HWP 파일의 XML 콘텐츠 추출
+                        file_list = hwp.namelist()
+
+                        # Contents 폴더의 Section 파일들에서 텍스트 추출
+                        for name in file_list:
+                            if name.startswith('Contents/Section') and name.endswith('.xml'):
+                                try:
+                                    xml_content = hwp.read(name).decode('utf-8', errors='ignore')
+                                    # 간단한 XML 파싱 - 텍스트 태그에서 내용 추출
+                                    import re
+                                    # <t> 태그 사이의 텍스트 추출
+                                    text_matches = re.findall(r'<t>([^<]+)</t>', xml_content)
+                                    for match in text_matches:
+                                        text += match + " "
+                                except:
+                                    pass
+
+                    return text if text else ""
                 except:
                     return ""
 
