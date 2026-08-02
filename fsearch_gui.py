@@ -740,10 +740,10 @@ class FSearchGUI(QMainWindow):
 
         combined_layout.addWidget(exclude_container, 1)
 
-        # 1센티미터 공간 추가 (약 28픽셀)
+        # 5픽셀 공간 추가
         spacer = QLabel()
-        spacer.setMinimumWidth(28)
-        spacer.setMaximumWidth(28)
+        spacer.setMinimumWidth(5)
+        spacer.setMaximumWidth(5)
         combined_layout.addWidget(spacer)
 
         # --- 자주 제외하는 폴더 통계 영역 ---
