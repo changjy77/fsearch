@@ -275,6 +275,7 @@ class SearchWorker(QThread):
     file_processing = pyqtSignal(str)  # 현재 처리 중인 파일 이름
     no_match_files_updated = pyqtSignal(list)  # 검색어 미포함 파일 목록
     skipped_files_count = pyqtSignal(int)  # 스킵된 파일 갯수
+    skipped_files_updated = pyqtSignal(list)  # 스킵된 대용량파일 목록
 
     def __init__(self, keyword, path, ignore_dirs, name_only, content_only, use_regex, max_workers, skip_large_files=False):
         super().__init__()
@@ -290,6 +291,7 @@ class SearchWorker(QThread):
         self.excluded_files = []  # 제외된 파일 목록
         self.file_cache = {}  # 실시간 캐싱: 파일 경로 → 텍스트
         self.skipped_large_files = 0  # 스킵된 대용량 파일 갯수
+        self.skipped_files_list = []  # 스킵된 대용량파일 목록
 
     def run(self):
         """검색 실행"""
@@ -341,6 +343,7 @@ class SearchWorker(QThread):
 
             self.finished.emit(results)
             self.no_match_files_updated.emit(no_match_files)
+            self.skipped_files_updated.emit(self.skipped_files_list)
             self.status.emit(f"✅ 검색 완료: {len(results)}개 결과")
 
         except Exception as e:
@@ -522,6 +525,7 @@ class SearchWorker(QThread):
         # 대용량 파일 스킵 (1MB 이상)
         if self.skip_large_files and file_size > 1 * 1024 * 1024:
             self.skipped_large_files += 1
+            self.skipped_files_list.append(str(file_path))
             self.skipped_files_count.emit(self.skipped_large_files)
             return results
 
@@ -664,6 +668,7 @@ class FSearchGUI(QMainWindow):
         self.excluded_files = []  # 제외된 파일 목록
         self.read_files = []  # 읽은 파일 목록 (누적)
         self.no_match_files = []  # 검색어 미포함 파일 목록 (누적)
+        self.skipped_files = []  # 스킵된 대용량파일 목록 (누적)
         self.logger = setup_logging()  # 로깅 설정
         self.search_history = SearchHistory()  # 검색 이력 관리
         self.search_start_time = None  # 검색 시작 시간
@@ -829,6 +834,7 @@ class FSearchGUI(QMainWindow):
         options2_layout.addWidget(self.no_match_files_btn)
 
         self.skipped_files_btn = QPushButton("⏭️ 스킵된 대용량파일 (0)")
+        self.skipped_files_btn.clicked.connect(self.show_skipped_files)
         self.skipped_files_btn.setMaximumHeight(25)
         self.skipped_files_btn.setEnabled(False)
         options2_layout.addWidget(self.skipped_files_btn)
@@ -1016,6 +1022,7 @@ class FSearchGUI(QMainWindow):
         self.excluded_files = []
         self.read_files = []
         self.no_match_files = []
+        self.skipped_files = []
 
         # 관련 버튼 초기화
         self.excluded_btn.setText("❌ 제외된 파일 (0)")
@@ -1046,6 +1053,7 @@ class FSearchGUI(QMainWindow):
         self.search_worker.file_processing.connect(self.update_current_file)  # 현재 처리 중인 파일
         self.search_worker.no_match_files_updated.connect(self.update_no_match_files)  # 검색어 미포함 파일
         self.search_worker.skipped_files_count.connect(self.update_skipped_files_count)  # 스킵된 파일 갯수
+        self.search_worker.skipped_files_updated.connect(self.update_skipped_files)  # 스킵된 대용량파일 목록
 
         # 로깅
         self.logger.info(f"검색 시작 - 경로: {path}, 검색어: {keyword}")
@@ -1154,6 +1162,13 @@ class FSearchGUI(QMainWindow):
 
         # 버튼 텍스트 업데이트
         self.no_match_files_btn.setText(f"❌ 검색어 미포함 파일 수 ({len(self.no_match_files)})")
+
+    def update_skipped_files(self, skipped_files):
+        """스킵된 대용량파일 목록 누적 업데이트"""
+        # 중복 제거하면서 누적
+        for file_path in skipped_files:
+            if file_path not in self.skipped_files:
+                self.skipped_files.append(file_path)
 
     def search_finished(self, results):
         """검색 완료"""
@@ -1432,6 +1447,40 @@ class FSearchGUI(QMainWindow):
 
         no_match_text = "\n".join(self.no_match_files)
         text_edit.setText(no_match_text)
+        layout.addWidget(text_edit)
+
+        # 닫기 버튼
+        close_btn = QPushButton("닫기")
+        close_btn.clicked.connect(dialog.close)
+        layout.addWidget(close_btn)
+
+        dialog.exec_()
+
+    def show_skipped_files(self):
+        """스킵된 대용량파일 목록 보기"""
+        if not self.skipped_files:
+            QMessageBox.information(self, "스킵된 대용량파일", "스킵된 파일이 없습니다.\n\n먼저 검색을 실행해주세요.")
+            return
+
+        # 스킵된 대용량파일 목록을 보여주는 윈도우
+        from PyQt5.QtWidgets import QDialog
+        dialog = QDialog(self)
+        dialog.setWindowTitle("⏭️ 스킵된 대용량파일")
+        dialog.setGeometry(200, 200, 800, 600)
+
+        layout = QVBoxLayout(dialog)
+
+        # 통계 정보
+        info_label = QLabel(f"1MB 이상 대용량파일 {len(self.skipped_files)}개 (누적)")
+        layout.addWidget(info_label)
+
+        # 스킵된 파일 목록
+        text_edit = QTextEdit()
+        text_edit.setReadOnly(True)
+        text_edit.setFont(QFont("Consolas", 9))
+
+        skipped_text = "\n".join(self.skipped_files)
+        text_edit.setText(skipped_text)
         layout.addWidget(text_edit)
 
         # 닫기 버튼
