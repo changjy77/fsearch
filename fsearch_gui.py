@@ -801,57 +801,64 @@ class FSearchGUI(QMainWindow):
             size_str = f"{size / (1024 * 1024):.1f} MB"
 
         # 각 컬럼에 데이터 입력
-        # 0: 파일명 (왼쪽 정렬)
-        filename_item = QTableWidgetItem(result['filename'])
-        filename_item.setToolTip(result['full_path'])
-        filename_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        # 0: 파일명 (검색어 강조 표시)
+        filename_text = result['filename']
+        if hasattr(self, 'current_keyword') and self.current_keyword:
+            highlighted_filename = self._highlight_keyword(filename_text, self.current_keyword, self.current_regex)
+            if '<span' in highlighted_filename:
+                filename_label = QLabel()
+                filename_label.setText(highlighted_filename)
+                filename_label.setStyleSheet("padding: 3px;")
+                filename_label.setToolTip(result['full_path'])
+                self.table.setCellWidget(current_row_count, 0, filename_label)
+            else:
+                filename_item = QTableWidgetItem(filename_text)
+                filename_item.setToolTip(result['full_path'])
+                filename_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                self.table.setItem(current_row_count, 0, filename_item)
+        else:
+            filename_item = QTableWidgetItem(filename_text)
+            filename_item.setToolTip(result['full_path'])
+            filename_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            self.table.setItem(current_row_count, 0, filename_item)
 
-        # 1: 경로 (왼쪽 정렬)
-        path_item = QTableWidgetItem(result['folder_path'])
-        path_item.setToolTip(result['folder_path'])
-        path_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        # 1: 경로 (검색어 강조 표시)
+        path_text = result['folder_path']
+        if hasattr(self, 'current_keyword') and self.current_keyword:
+            highlighted_path = self._highlight_keyword(path_text, self.current_keyword, self.current_regex)
+            if '<span' in highlighted_path:
+                path_label = QLabel()
+                path_label.setText(highlighted_path)
+                path_label.setStyleSheet("padding: 3px;")
+                path_label.setToolTip(path_text)
+                self.table.setCellWidget(current_row_count, 1, path_label)
+            else:
+                path_item = QTableWidgetItem(path_text)
+                path_item.setToolTip(path_text)
+                path_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                self.table.setItem(current_row_count, 1, path_item)
+        else:
+            path_item = QTableWidgetItem(path_text)
+            path_item.setToolTip(path_text)
+            path_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            self.table.setItem(current_row_count, 1, path_item)
 
         # 2: 크기 (오른쪽 정렬 - 숫자)
         size_item = QTableWidgetItem(size_str)
         size_item.setToolTip(str(result['size']) + " bytes")
         size_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.table.setItem(current_row_count, 2, size_item)
 
         # 3: 수정 날짜 (왼쪽 정렬)
         modified_item = QTableWidgetItem(result['modified'])
         modified_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.table.setItem(current_row_count, 3, modified_item)
 
         # 4: 검색 단어수 (오른쪽 정렬 - 숫자)
         match_count = result.get('match_count', 0)
         match_count_item = QTableWidgetItem(str(match_count))
         match_count_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-
-        self.table.setItem(current_row_count, 0, filename_item)
-        self.table.setItem(current_row_count, 1, path_item)
-        self.table.setItem(current_row_count, 2, size_item)
-        self.table.setItem(current_row_count, 3, modified_item)
         self.table.setItem(current_row_count, 4, match_count_item)
-
-        # 검색어 강조 표시 (검색어만 굵게 + 빨간색)
-        if hasattr(self, 'current_keyword') and self.current_keyword:
-            keyword = self.current_keyword
-            keyword_lower = keyword.lower() if not self.current_regex else keyword
-
-            for col in [0, 1]:  # 파일명과 경로
-                item = self.table.item(current_row_count, col)
-                if item:
-                    text = item.text()
-                    # 검색 단어 찾기 및 강조
-                    highlighted_text = self._highlight_keyword(text, keyword, self.current_regex)
-
-                    # HTML이 포함된 경우 QLabel로 표시
-                    if '<span' in highlighted_text:
-                        label = QLabel()
-                        label.setText(highlighted_text)
-                        label.setStyleSheet("padding: 3px;")
-                        self.table.setCellWidget(current_row_count, col, label)
-                    else:
-                        # 검색어가 없으면 일반 아이템
-                        self.table.setItem(current_row_count, col, item)
 
         # 컬럼 너비를 내용에 맞게 자동 조정
         self.table.resizeColumnsToContents()
