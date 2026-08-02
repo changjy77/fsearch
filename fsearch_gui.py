@@ -1136,6 +1136,9 @@ class FSearchGUI(QMainWindow):
 
     def add_result_row(self, result):
         """테이블에 결과 행 추가 (실시간)"""
+        # 결과를 누적 리스트에 추가
+        self.results.append(result)
+
         current_row_count = self.table.rowCount()
         self.table.insertRow(current_row_count)
 
@@ -1247,7 +1250,7 @@ class FSearchGUI(QMainWindow):
         self.search_btn.setText("🔍 검색")
         self.search_btn.setStyleSheet("QPushButton { }")  # 기본 스타일 복원
 
-        self.results = results
+        # self.results는 이미 add_result_row에서 누적됨
         self.progress_bar.setVisible(False)
 
         # 테이블 셀 더블클릭 시 파일 실행
