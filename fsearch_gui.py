@@ -7,6 +7,7 @@ import sys
 import os
 import re
 import time
+import json
 import subprocess
 import logging
 import zipfile
@@ -63,6 +64,60 @@ def setup_logging():
         ]
     )
     return logging.getLogger(__name__)
+
+
+class SearchHistory:
+    """검색 이력 관리 - 최대 10개 저장"""
+    def __init__(self):
+        self.config_dir = Path.home() / ".fsearch"
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        self.history_file = self.config_dir / "search_history.json"
+        self.history = self._load_history()
+
+    def _load_history(self):
+        """저장된 검색 이력 로드"""
+        if self.history_file.exists():
+            try:
+                with open(self.history_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except:
+                return []
+        return []
+
+    def _save_history(self):
+        """검색 이력 저장"""
+        try:
+            with open(self.history_file, 'w', encoding='utf-8') as f:
+                json.dump(self.history, f, ensure_ascii=False, indent=2)
+        except:
+            pass
+
+    def add(self, keyword):
+        """검색어 추가 (중복 제거, 최대 10개)"""
+        if not keyword or not keyword.strip():
+            return
+
+        keyword = keyword.strip()
+        # 중복 제거
+        if keyword in self.history:
+            self.history.remove(keyword)
+
+        # 맨 앞에 추가
+        self.history.insert(0, keyword)
+
+        # 최대 10개 유지
+        self.history = self.history[:10]
+
+        self._save_history()
+
+    def get_all(self):
+        """모든 검색 이력 반환"""
+        return self.history
+
+    def clear(self):
+        """검색 이력 삭제"""
+        self.history = []
+        self._save_history()
 
 
 class SearchResultDelegate(QStyledItemDelegate):
@@ -532,6 +587,7 @@ class FSearchGUI(QMainWindow):
         self.read_files = []  # 읽은 파일 목록 (누적)
         self.no_match_files = []  # 검색어 미포함 파일 목록 (누적)
         self.logger = setup_logging()  # 로깅 설정
+        self.search_history = SearchHistory()  # 검색 이력 관리
         self.init_ui()
 
     def init_ui(self):
@@ -561,12 +617,19 @@ class FSearchGUI(QMainWindow):
         browse_btn.setMaximumHeight(25)
         options_layout.addWidget(browse_btn)
 
-        # 검색어
+        # 검색어 (검색 이력 드롭다운)
         options_layout.addWidget(QLabel("검색:"))
-        self.keyword_input = QLineEdit()
-        self.keyword_input.setPlaceholderText("검색할 키워드 입력...")
-        self.keyword_input.returnPressed.connect(self.search)
+        self.keyword_input = QComboBox()
+        self.keyword_input.setEditable(True)
+        self.keyword_input.lineEdit().setPlaceholderText("검색할 키워드 입력...")
+        self.keyword_input.lineEdit().returnPressed.connect(self.search)
         self.keyword_input.setMaximumHeight(25)
+
+        # 검색 이력 로드
+        history = self.search_history.get_all()
+        if history:
+            self.keyword_input.addItems(history)
+
         options_layout.addWidget(self.keyword_input, 2)
 
         search_btn = QPushButton("🔍 검색")
@@ -760,7 +823,7 @@ class FSearchGUI(QMainWindow):
 
     def search(self):
         """검색 실행"""
-        keyword = self.keyword_input.text().strip()
+        keyword = self.keyword_input.currentText().strip()
         if not keyword:
             QMessageBox.warning(self, "입력 오류", "검색어를 입력하세요.")
             return
@@ -769,6 +832,9 @@ class FSearchGUI(QMainWindow):
         if not Path(path).exists():
             QMessageBox.warning(self, "경로 오류", "경로가 존재하지 않습니다.")
             return
+
+        # 검색 이력에 저장 (최대 10개)
+        self.search_history.add(keyword)
 
         # 현재 검색 단어 저장
         self.current_keyword = keyword
