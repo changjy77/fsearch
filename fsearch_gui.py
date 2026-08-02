@@ -828,6 +828,11 @@ class FSearchGUI(QMainWindow):
         self.no_match_files_btn.setMaximumHeight(25)
         options2_layout.addWidget(self.no_match_files_btn)
 
+        self.skipped_files_btn = QPushButton("⏭️ 스킵된 대용량파일 (0)")
+        self.skipped_files_btn.setMaximumHeight(25)
+        self.skipped_files_btn.setEnabled(False)
+        options2_layout.addWidget(self.skipped_files_btn)
+
         self.performance_btn = QPushButton("⏱️ 완료시간 (0.00초)")
         self.performance_btn.setMaximumHeight(25)
         self.performance_btn.setEnabled(False)
@@ -1016,6 +1021,7 @@ class FSearchGUI(QMainWindow):
         self.excluded_btn.setText("❌ 제외된 파일 (0)")
         self.read_files_btn.setText("🔍 찾은 파일 수 (0)")
         self.no_match_files_btn.setText("❌ 검색어 미포함 파일 수 (0)")
+        self.skipped_files_btn.setText("⏭️ 스킵된 대용량파일 (0)")
 
         # 체크된 제외 폴더만 수집
         ignore_dirs = {folder for folder, cb in self.exclude_checkboxes.items() if cb.isChecked()}
@@ -1252,9 +1258,12 @@ class FSearchGUI(QMainWindow):
         # 읽은 파일 버튼 업데이트
         self.read_files_btn.setText(f"🔍 찾은 파일 수 ({len(self.read_files)})")
 
-        # 상태 메시지 업데이트 - 스킵된 파일 정보 포함
-        skip_info = f" (스킵: {self.skipped_files_count_total}개 대용량파일)" if self.skipped_files_count_total > 0 else ""
-        self.status_label.setText(f"✅ 검색 완료: {len(results)}개 결과{skip_info}")
+        # 스킵된 대용량파일 버튼 업데이트
+        self.skipped_files_btn.setText(f"⏭️ 스킵된 대용량파일 ({self.skipped_files_count_total})")
+        self.skipped_files_btn.setEnabled(self.skipped_files_count_total > 0)
+
+        # 상태 메시지 업데이트
+        self.status_label.setText(f"✅ 검색 완료: {len(results)}개 결과")
 
         # 로깅 - 검색 결과
         self.logger.info(f"검색 완료 - 총 {len(results)}개 결과 (파일: {len(file_counts)}개, 스킵: {self.skipped_files_count_total}개)")
