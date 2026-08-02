@@ -275,7 +275,7 @@ class SearchWorker(QThread):
     file_processing = pyqtSignal(str)  # 현재 처리 중인 파일 이름
     no_match_files_updated = pyqtSignal(list)  # 검색어 미포함 파일 목록
 
-    def __init__(self, keyword, path, ignore_dirs, name_only, content_only, use_regex, max_workers):
+    def __init__(self, keyword, path, ignore_dirs, name_only, content_only, use_regex, max_workers, skip_large_files=False):
         super().__init__()
         self.keyword = keyword
         self.path = path
@@ -284,8 +284,10 @@ class SearchWorker(QThread):
         self.content_only = content_only
         self.use_regex = use_regex
         self.max_workers = max_workers
+        self.skip_large_files = skip_large_files
         self.results = []
         self.excluded_files = []  # 제외된 파일 목록
+        self.file_cache = {}  # 실시간 캐싱: 파일 경로 → 텍스트
 
     def run(self):
         """검색 실행"""
@@ -399,7 +401,13 @@ class SearchWorker(QThread):
         return files
 
     def _extract_text(self, file_path: Path) -> str:
-        """파일 형식별로 텍스트 추출"""
+        """파일 형식별로 텍스트 추출 (캐싱 지원)"""
+        file_path_str = str(file_path)
+
+        # 캐시 확인
+        if file_path_str in self.file_cache:
+            return self.file_cache[file_path_str]
+
         ext = file_path.suffix.lower()
 
         try:
@@ -508,6 +516,10 @@ class SearchWorker(QThread):
         except:
             file_size = 0
             mod_time = "Unknown"
+
+        # 대용량 파일 스킵 (100MB 이상)
+        if self.skip_large_files and file_size > 100 * 1024 * 1024:
+            return results
 
         # 파일명과 폴더 경로 분리
         filename = file_path.name
@@ -775,16 +787,19 @@ class FSearchGUI(QMainWindow):
         self.content_only_cb.setMaximumHeight(25)
         self.regex_cb = QCheckBox("정규식")
         self.regex_cb.setMaximumHeight(25)
+        self.skip_large_cb = QCheckBox("대용량파일 스킵(>100MB)")
+        self.skip_large_cb.setMaximumHeight(25)
 
         options2_layout.addWidget(self.name_only_cb)
         options2_layout.addWidget(self.content_only_cb)
         options2_layout.addWidget(self.regex_cb)
+        options2_layout.addWidget(self.skip_large_cb)
 
         options2_layout.addWidget(QLabel("스레드:"))
         self.workers_spin = QSpinBox()
         self.workers_spin.setValue(8)
         self.workers_spin.setMinimum(1)
-        self.workers_spin.setMaximum(16)
+        self.workers_spin.setMaximum(32)
         self.workers_spin.setMaximumHeight(25)
         options2_layout.addWidget(self.workers_spin)
 
@@ -994,7 +1009,8 @@ class FSearchGUI(QMainWindow):
             name_only=self.name_only_cb.isChecked(),
             content_only=self.content_only_cb.isChecked(),
             use_regex=self.regex_cb.isChecked(),
-            max_workers=self.workers_spin.value()
+            max_workers=self.workers_spin.value(),
+            skip_large_files=self.skip_large_cb.isChecked()
         )
 
         self.search_worker.progress.connect(self.update_progress)
