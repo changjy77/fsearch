@@ -696,11 +696,11 @@ class FSearchGUI(QMainWindow):
             QTabBar::tab {
                 background-color: #f5f5f5;
                 color: #333;
-                padding: 8px 20px;
+                padding: 6px 16px;
                 margin-right: 2px;
                 border: 1px solid #ddd;
                 border-bottom: none;
-                font-size: 11pt;
+                font-size: 10pt;
             }
             QTabBar::tab:selected {
                 background-color: #ffffff;
