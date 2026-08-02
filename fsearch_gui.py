@@ -79,7 +79,21 @@ class SearchHistory:
         if self.history_file.exists():
             try:
                 with open(self.history_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
+                    data = json.load(f)
+                    # 기존 리스트 형식 호환성 처리
+                    if isinstance(data, list):
+                        return {
+                            'keywords': data,
+                            'paths': [],
+                            'excluded_stats': {}
+                        }
+                    elif isinstance(data, dict):
+                        # 누락된 키 채우기
+                        if 'paths' not in data:
+                            data['paths'] = []
+                        if 'excluded_stats' not in data:
+                            data['excluded_stats'] = {}
+                        return data
             except:
                 pass
         return {
