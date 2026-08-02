@@ -895,9 +895,13 @@ class FSearchGUI(QMainWindow):
         # 컬럼 너비 자동 조정
         self.table.resizeColumnsToContents()
 
-        # 텍스트 탭 업데이트
-        text_output = "검색 결과:\n" + "="*100 + "\n\n"
+        # 텍스트 탭 업데이트 (검색어 굵게 표기)
+        text_output = "<html><body><pre>검색 결과:\n" + "="*100 + "\n\n"
         shown_files = set()
+
+        # 검색어 준비
+        keyword = getattr(self, 'current_keyword', '')
+        use_regex = getattr(self, 'current_regex', False)
 
         for result in results:
             # 각 파일당 한 번씩만 정보 표시
@@ -913,13 +917,21 @@ class FSearchGUI(QMainWindow):
                 else:
                     size_str = f"{size / (1024 * 1024):.1f} MB"
 
-                text_output += f"[{result['filename']}]\n"
-                text_output += f"  경로: {file_path}\n"
+                # 파일명에서 검색어를 굵게 표기
+                filename = result['filename']
+                highlighted_filename = self._highlight_keyword(filename, keyword, use_regex)
+
+                # 경로에서 검색어를 굵게 표기
+                highlighted_path = self._highlight_keyword(file_path, keyword, use_regex)
+
+                text_output += f"[{highlighted_filename}]\n"
+                text_output += f"  경로: {highlighted_path}\n"
                 text_output += f"  크기: {size_str}\n"
                 text_output += f"  수정일: {result['modified']}\n"
                 text_output += f"  검색 단어수: {result['match_count']}\n\n"
 
-        self.text_output.setText(text_output)
+        text_output += "</pre></body></html>"
+        self.text_output.setHtml(text_output)
 
         # 파일별 검색 결과 개수 계산
         file_counts = defaultdict(int)
@@ -938,6 +950,24 @@ class FSearchGUI(QMainWindow):
 
         # 로깅 - 검색 결과
         self.logger.info(f"검색 완료 - 총 {len(results)}개 결과 (파일: {len(file_counts)}개)")
+
+    def _highlight_keyword(self, text: str, keyword: str, use_regex: bool) -> str:
+        """텍스트에서 검색어를 HTML 굵게 태그로 감싸기"""
+        if not keyword:
+            return text
+
+        if use_regex:
+            try:
+                # 정규식 사용
+                pattern = re.compile(f'({keyword})', re.IGNORECASE)
+                return pattern.sub(r'<b>\1</b>', text)
+            except:
+                return text
+        else:
+            # 일반 문자열 검색 (대소문자 무시)
+            # 모든 일치 부분을 굵게 표기
+            pattern = re.compile(f'({re.escape(keyword)})', re.IGNORECASE)
+            return pattern.sub(r'<b>\1</b>', text)
 
     def search_error(self, error):
         """검색 오류"""
