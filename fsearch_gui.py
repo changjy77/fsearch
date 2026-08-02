@@ -823,7 +823,7 @@ class FSearchGUI(QMainWindow):
 
         options2_layout.addWidget(QLabel("스레드:"))
         self.workers_spin = QSpinBox()
-        self.workers_spin.setValue(8)
+        self.workers_spin.setValue(16)
         self.workers_spin.setMinimum(1)
         self.workers_spin.setMaximum(32)
         self.workers_spin.setMaximumHeight(25)
