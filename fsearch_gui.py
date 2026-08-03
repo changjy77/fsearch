@@ -1160,6 +1160,7 @@ class FSearchGUI(QMainWindow):
                 filename_label.setText(highlighted_filename)
                 filename_label.setStyleSheet("padding: 3px;")
                 filename_label.setToolTip(result['full_path'])
+                filename_label.setProperty("file_path", result['full_path'])  # ✅ 파일 경로 저장
                 self.table.setCellWidget(current_row_count, 0, filename_label)
             else:
                 filename_item = QTableWidgetItem(filename_text)
@@ -1183,6 +1184,7 @@ class FSearchGUI(QMainWindow):
                 path_label.setText(highlighted_path)
                 path_label.setStyleSheet("padding: 3px;")
                 path_label.setToolTip(path_text)
+                path_label.setProperty("file_path", result['full_path'])  # ✅ 파일 경로 저장
                 self.table.setCellWidget(current_row_count, 1, path_label)
             else:
                 path_item = QTableWidgetItem(path_text)
@@ -1402,16 +1404,39 @@ class FSearchGUI(QMainWindow):
         QMessageBox.information(self, "캐시", "검색 시 파일 목록이 새로 수집됩니다.")
 
     def open_file(self, row, column):
-        """파일 또는 폴더 열기 (더블클릭 시 호출 - QLabel/QTableWidgetItem 모두 처리)"""
+        """파일 또는 폴더 열기 (더블클릭 시 호출 - 검색 중/완료 모두 처리)"""
         try:
-            # 행 번호 검증
-            if row < 0 or row >= len(self.results):
+            # 행 번호 범위 검증
+            if row < 0 or row >= self.table.rowCount():
                 self.status_label.setText("❌ 유효하지 않은 행입니다")
                 return
 
-            # self.results에서 직접 파일 경로 추출 (QLabel/Item 구분 없이 작동)
-            result = self.results[row]
-            file_path = result.get('full_path') or result.get('path')
+            file_path = None
+
+            # 1️⃣ self.results에서 파일 경로 추출 시도 (정렬되지 않은 상태에서만 가능)
+            if row < len(self.results):
+                result = self.results[row]
+                file_path = result.get('full_path') or result.get('path')
+
+            # 2️⃣ self.results에 없으면 테이블의 셀에서 추출
+            # - QTableWidgetItem의 UserRole 데이터
+            # - QLabel의 property
+            if not file_path:
+                # 크기 셀(2)에서 추출 시도
+                item = self.table.item(row, 2)
+                if item:
+                    file_path = item.data(Qt.UserRole)
+
+                # 여전히 없으면 QLabel에서 추출
+                if not file_path:
+                    widget = self.table.cellWidget(row, 0)
+                    if widget and isinstance(widget, QLabel):
+                        file_path = widget.property("file_path")
+
+                    if not file_path:
+                        widget = self.table.cellWidget(row, 1)
+                        if widget and isinstance(widget, QLabel):
+                            file_path = widget.property("file_path")
 
             # 파일 경로 검증
             if not file_path or not isinstance(file_path, str):
