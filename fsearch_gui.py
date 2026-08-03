@@ -896,7 +896,7 @@ class FSearchGUI(QMainWindow):
         self.table.verticalHeader().setVisible(False)  # 행 번호 숨김
         self.table.setSelectionBehavior(0)  # 행 선택 모드
         self.table.setSortingEnabled(False)  # ✅ 정렬 기능 비활성화
-        self.table.itemDoubleClicked.connect(self.open_file)  # 더블클릭 시 파일 실행
+        self.table.cellDoubleClicked.connect(self.open_file)  # 더블클릭 시 파일 실행 (QLabel/Item 모두 처리)
         self.tabs.addTab(self.table, "🗂️ 결과 (테이블)")
 
         # 텍스트 탭
@@ -1401,15 +1401,17 @@ class FSearchGUI(QMainWindow):
         """캐시 새로고침"""
         QMessageBox.information(self, "캐시", "검색 시 파일 목록이 새로 수집됩니다.")
 
-    def open_file(self, item):
-        """파일 또는 폴더 열기 (더블클릭 시 호출)"""
+    def open_file(self, row, column):
+        """파일 또는 폴더 열기 (더블클릭 시 호출 - QLabel/QTableWidgetItem 모두 처리)"""
         try:
-            # item 검증
-            if not isinstance(item, QTableWidgetItem):
+            # 행 번호 검증
+            if row < 0 or row >= len(self.results):
+                self.status_label.setText("❌ 유효하지 않은 행입니다")
                 return
 
-            # 파일 경로 추출
-            file_path = item.data(Qt.UserRole)
+            # self.results에서 직접 파일 경로 추출 (QLabel/Item 구분 없이 작동)
+            result = self.results[row]
+            file_path = result.get('full_path') or result.get('path')
 
             # 파일 경로 검증
             if not file_path or not isinstance(file_path, str):
