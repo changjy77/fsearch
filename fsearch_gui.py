@@ -1449,10 +1449,12 @@ class FSearchGUI(QMainWindow):
         # matched_lines 가져오기 (여러 소스에서 시도)
         matched_lines = None
         found_source = None
+        match_count = 0
 
         # 1. self.results에서 먼저 확인
         if row < len(self.results):
             matched_lines = self.results[row].get('matched_lines', [])
+            match_count = self.results[row].get('match_count', 0)
             if matched_lines:
                 found_source = "self.results"
 
@@ -1476,6 +1478,25 @@ class FSearchGUI(QMainWindow):
                     matched_lines = widget.property("matched_lines")
                     if matched_lines:
                         break
+
+        # 파일명 전용 검색 확인: match_count가 1이고 matched_lines가 비어있음
+        if match_count == 1 and (not matched_lines or len(matched_lines) == 0):
+            # 파일명에만 검색어가 있는 경우
+            preview_text = "📝 본문에 검색어 없음\n" + "=" * 70 + "\n검색어는 파일명에만 포함되어 있습니다."
+
+            # 해당 셀에 ToolTip 설정
+            item = self.table.item(row, column)
+            if item:
+                item.setToolTip(preview_text)
+            else:
+                # QLabel 위젯인 경우
+                widget = self.table.cellWidget(row, column)
+                if widget and isinstance(widget, QLabel):
+                    widget.setToolTip(preview_text)
+
+            # 상태 바에도 메시지 표시
+            self.status_label.setText("📝 본문에 검색어 없음 (파일명만 일치)")
+            return
 
         # matched_lines가 있으면 미리보기 표시
         if matched_lines and isinstance(matched_lines, list) and len(matched_lines) > 0:
