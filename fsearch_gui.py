@@ -901,6 +901,7 @@ class FSearchGUI(QMainWindow):
         self.table.verticalHeader().setVisible(False)  # 행 번호 숨김
         self.table.setSelectionBehavior(0)  # 행 선택 모드
         self.table.setSortingEnabled(False)  # ✅ 정렬 기능 비활성화
+        self.table.setMouseTracking(True)  # ✅ 마우스 트래킹 활성화 (호버 감지용)
         self.table.cellDoubleClicked.connect(self.open_file)  # 더블클릭 시 파일 실행 (QLabel/Item 모두 처리)
         self.table.itemEntered.connect(self.on_table_item_entered)  # 마우스 호버 시 미리보기 표시
 
@@ -1158,6 +1159,9 @@ class FSearchGUI(QMainWindow):
             size_str = f"{size / (1024 * 1024):.1f} MB"
 
         # 각 컬럼에 데이터 입력
+        # matched_lines를 미리 준비 (모든 셀에 저장)
+        matched_lines = result.get('matched_lines', [])
+
         # 0: 파일명 (검색어 강조 표시)
         filename_text = result['filename']
         if hasattr(self, 'current_keyword') and self.current_keyword:
@@ -1174,12 +1178,14 @@ class FSearchGUI(QMainWindow):
                 filename_item.setToolTip(result['full_path'])
                 filename_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
                 filename_item.setData(Qt.UserRole, result['full_path'])  # ✅ 파일 경로 저장
+                filename_item.setData(Qt.UserRole + 1, matched_lines)  # ✅ matched_lines 저장
                 self.table.setItem(current_row_count, 0, filename_item)
         else:
             filename_item = QTableWidgetItem(filename_text)
             filename_item.setToolTip(result['full_path'])
             filename_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             filename_item.setData(Qt.UserRole, result['full_path'])  # ✅ 파일 경로 저장
+            filename_item.setData(Qt.UserRole + 1, matched_lines)  # ✅ matched_lines 저장
             self.table.setItem(current_row_count, 0, filename_item)
 
         # 1: 경로 (검색어 강조 표시)
@@ -1198,12 +1204,14 @@ class FSearchGUI(QMainWindow):
                 path_item.setToolTip(path_text)
                 path_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
                 path_item.setData(Qt.UserRole, result['full_path'])  # ✅ 파일 경로 저장
+                path_item.setData(Qt.UserRole + 1, matched_lines)  # ✅ matched_lines 저장
                 self.table.setItem(current_row_count, 1, path_item)
         else:
             path_item = QTableWidgetItem(path_text)
             path_item.setToolTip(path_text)
             path_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             path_item.setData(Qt.UserRole, result['full_path'])  # ✅ 파일 경로 저장
+            path_item.setData(Qt.UserRole + 1, matched_lines)  # ✅ matched_lines 저장
             self.table.setItem(current_row_count, 1, path_item)
 
         # 2: 크기 (오른쪽 정렬 - 숫자)
@@ -1220,6 +1228,7 @@ class FSearchGUI(QMainWindow):
         modified_item = QTableWidgetItem(result['modified'])
         modified_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         modified_item.setData(Qt.UserRole, result['full_path'])  # ✅ 파일 경로 저장
+        modified_item.setData(Qt.UserRole + 1, matched_lines)  # ✅ matched_lines 저장
         self.table.setItem(current_row_count, 3, modified_item)
 
         # 4: 검색 단어수 (오른쪽 정렬 - 숫자)
@@ -1227,6 +1236,7 @@ class FSearchGUI(QMainWindow):
         match_count_item = QTableWidgetItem(str(match_count))
         match_count_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
         match_count_item.setData(Qt.UserRole, result['full_path'])  # ✅ 파일 경로 저장
+        match_count_item.setData(Qt.UserRole + 1, matched_lines)  # ✅ matched_lines 저장
         self.table.setItem(current_row_count, 4, match_count_item)
 
         # 컬럼 너비를 내용에 맞게 자동 조정
@@ -1433,27 +1443,32 @@ class FSearchGUI(QMainWindow):
             return
 
         row = self.table.row(item)
-        col = self.table.column(item)
 
-        # 모든 셀에서 matched_lines 찾기
-        matched_lines = None
+        # 해당 아이템에서 matched_lines 가져오기
+        matched_lines = item.data(Qt.UserRole + 1)
 
-        for column in range(self.table.columnCount()):
-            cell_item = self.table.item(row, column)
-            if cell_item:
-                matched_lines = cell_item.data(Qt.UserRole + 1)
-                if matched_lines:
-                    break
+        # matched_lines가 없으면 self.results에서 직접 가져오기
+        if not matched_lines and row < len(self.results):
+            matched_lines = self.results[row].get('matched_lines', [])
 
-        # matched_lines가 있으면 ToolTip 표시
+        # matched_lines가 있으면 미리보기 표시
         if matched_lines and isinstance(matched_lines, list) and len(matched_lines) > 0:
-            preview_text = "📝 검색어 포함 문장:\n" + "-" * 60 + "\n"
+            # ToolTip 텍스트 생성
+            preview_text = "📝 검색어 포함 문장:\n" + "=" * 70 + "\n"
 
             for idx, line in enumerate(matched_lines, 1):
                 display_line = line if len(line) <= 100 else line[:100] + "..."
                 preview_text += f"{idx}. {display_line}\n"
 
+            # 클릭한 아이템에 ToolTip 설정
             item.setToolTip(preview_text)
+
+            # 상태 바에도 미리보기 표시 (첫 번째 문장)
+            if matched_lines and len(matched_lines) > 0:
+                status_msg = matched_lines[0]
+                if len(status_msg) > 100:
+                    status_msg = status_msg[:100] + "..."
+                self.status_label.setText(f"📝 {status_msg}")
 
     def open_file(self, row, column):
         """파일 또는 폴더 열기 (더블클릭 시 호출 - 검색 중/완료 모두 처리)"""
