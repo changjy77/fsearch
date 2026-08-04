@@ -903,7 +903,7 @@ class FSearchGUI(QMainWindow):
         self.table.setSortingEnabled(False)  # ✅ 정렬 기능 비활성화
         self.table.setMouseTracking(True)  # ✅ 마우스 트래킹 활성화 (호버 감지용)
         self.table.cellDoubleClicked.connect(self.open_file)  # 더블클릭 시 파일 실행 (QLabel/Item 모두 처리)
-        self.table.itemEntered.connect(self.on_table_item_entered)  # 마우스 호버 시 미리보기 표시
+        self.table.cellEntered.connect(self.on_table_cell_entered)  # 마우스 호버 시 미리보기 표시 (QLabel 포함)
 
         self.tabs.addTab(self.table, "🗂️ 결과 (테이블)")
 
@@ -1437,19 +1437,21 @@ class FSearchGUI(QMainWindow):
         """캐시 새로고침"""
         QMessageBox.information(self, "캐시", "검색 시 파일 목록이 새로 수집됩니다.")
 
-    def on_table_item_entered(self, item):
-        """테이블 아이템 호버 시 미리보기 표시"""
-        if not item:
+    def on_table_cell_entered(self, row, column):
+        """테이블 셀 호버 시 미리보기 표시 (QLabel 위젯과 QTableWidgetItem 모두 처리)"""
+        if row < 0 or row >= self.table.rowCount():
             return
 
-        row = self.table.row(item)
-
-        # 해당 아이템에서 matched_lines 가져오기
-        matched_lines = item.data(Qt.UserRole + 1)
-
-        # matched_lines가 없으면 self.results에서 직접 가져오기
-        if not matched_lines and row < len(self.results):
+        # self.results에서 matched_lines 가져오기
+        matched_lines = None
+        if row < len(self.results):
             matched_lines = self.results[row].get('matched_lines', [])
+
+        # 없으면 테이블 아이템에서 조회
+        if not matched_lines:
+            item = self.table.item(row, column)
+            if item:
+                matched_lines = item.data(Qt.UserRole + 1)
 
         # matched_lines가 있으면 미리보기 표시
         if matched_lines and isinstance(matched_lines, list) and len(matched_lines) > 0:
@@ -1460,8 +1462,15 @@ class FSearchGUI(QMainWindow):
                 display_line = line if len(line) <= 100 else line[:100] + "..."
                 preview_text += f"{idx}. {display_line}\n"
 
-            # 클릭한 아이템에 ToolTip 설정
-            item.setToolTip(preview_text)
+            # 해당 셀에 ToolTip 설정
+            item = self.table.item(row, column)
+            if item:
+                item.setToolTip(preview_text)
+            else:
+                # QLabel 위젯인 경우
+                widget = self.table.cellWidget(row, column)
+                if widget and isinstance(widget, QLabel):
+                    widget.setToolTip(preview_text)
 
             # 상태 바에도 미리보기 표시 (첫 번째 문장)
             if matched_lines and len(matched_lines) > 0:
