@@ -161,6 +161,11 @@ class SearchHistory:
 
         self._save_data()
 
+    def clear_keywords(self):
+        """모든 검색어 삭제"""
+        self.data['keywords'] = []
+        self._save_data()
+
     def get_keywords(self):
         """모든 검색 키워드 반환"""
         return self.data.get('keywords', [])
@@ -753,6 +758,11 @@ class FSearchGUI(QMainWindow):
         self.search_btn.setMaximumHeight(25)
         options_layout.addWidget(self.search_btn)
 
+        self.clear_history_btn = QPushButton("🗑️ 검색어 초기화")
+        self.clear_history_btn.clicked.connect(self.clear_search_history)
+        self.clear_history_btn.setMaximumHeight(25)
+        options_layout.addWidget(self.clear_history_btn)
+
         layout.addLayout(options_layout)
 
         # ===== 경로 제외 영역 + 자주 제외하는 폴더 통계 (같은 행) =====
@@ -1106,6 +1116,20 @@ class FSearchGUI(QMainWindow):
         self.toggle_button_blink()  # 초기 상태 설정
         self.blink_timer.start(500)  # 500ms 간격으로 깜박임
         self.search_worker.start()
+
+    def clear_search_history(self):
+        """모든 검색어 삭제"""
+        reply = QMessageBox.question(
+            self,
+            "검색어 초기화",
+            "저장된 모든 검색어를 삭제하시겠습니까?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            self.search_history.clear_keywords()
+            self.keyword_input.clear()
+            QMessageBox.information(self, "완료", "검색어가 모두 삭제되었습니다.")
 
     def toggle_button_blink(self):
         """버튼 깜박임 토글"""
