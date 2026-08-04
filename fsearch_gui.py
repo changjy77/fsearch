@@ -551,6 +551,7 @@ class SearchWorker(QThread):
 
         total_match_count = 0
         filename_matched = False
+        matched_lines = []  # 매칭된 라인 저장
 
         # 파일명 검색
         if not self.content_only:
@@ -569,6 +570,9 @@ class SearchWorker(QThread):
                     if self._match_keyword(line, regex):
                         total_match_count += 1
                         content_match_count += 1
+                        # 매칭된 라인 저장 (최대 3줄)
+                        if len(matched_lines) < 3:
+                            matched_lines.append(line.strip())
 
         # 매칭이 있으면 파일당 하나의 결과만 추가
         if total_match_count > 0:
@@ -579,7 +583,8 @@ class SearchWorker(QThread):
                 'full_path': str(file_path),
                 'size': file_size,
                 'modified': mod_time,
-                'match_count': total_match_count
+                'match_count': total_match_count,
+                'matched_lines': matched_lines  # 매칭된 라인 추가
             })
 
         return results
@@ -1299,8 +1304,8 @@ class FSearchGUI(QMainWindow):
                             item.setFont(bold_font)
                             item.setForeground(QColor('red'))
 
-        # 검색 단어수로 정렬 기능 비활성화
-        # self.sort_table_by_match_count()
+        # 검색 단어수로 정렬
+        self.sort_results_by_match_count()
 
         # 컬럼 너비 자동 조정
         self.table.resizeColumnsToContents()
@@ -1338,7 +1343,21 @@ class FSearchGUI(QMainWindow):
                 text_output += f"  경로: {highlighted_path}\n"
                 text_output += f"  크기: {size_str}\n"
                 text_output += f"  수정일: {result['modified']}\n"
-                text_output += f"  검색 단어수: {result['match_count']}\n\n"
+                text_output += f"  검색 단어수: {result['match_count']}\n"
+
+                # 매칭된 라인 출력 (최대 3줄)
+                matched_lines = result.get('matched_lines', [])
+                if matched_lines:
+                    text_output += f"  검색어 포함 문장:\n"
+                    for idx, line in enumerate(matched_lines, 1):
+                        # 검색어 강조
+                        highlighted_line = self._highlight_keyword(line, keyword, use_regex)
+                        # 긴 라인은 줄임
+                        if len(highlighted_line) > 120:
+                            highlighted_line = highlighted_line[:120] + "..."
+                        text_output += f"    {idx}. {highlighted_line}\n"
+
+                text_output += "\n"
 
         text_output += "</pre></body></html>"
         self.text_output.setHtml(text_output)
@@ -1475,6 +1494,18 @@ class FSearchGUI(QMainWindow):
             self.status_label.setText(f"❌ {error_msg}")
             if hasattr(self, 'logger'):
                 self.logger.error(error_msg)
+
+    def sort_results_by_match_count(self):
+        """검색 단어수(match_count)로 내림차순 정렬하고 테이블 재구성"""
+        # self.results를 match_count 기준 내림차순으로 정렬
+        self.results.sort(key=lambda x: x['match_count'], reverse=True)
+
+        # 테이블 초기화
+        self.table.setRowCount(0)
+
+        # 정렬된 results로 테이블 재구성
+        for result in self.results:
+            self.add_result_row(result)
 
     def update_excluded_files(self, excluded_files):
         """제외된 파일 목록 업데이트"""
