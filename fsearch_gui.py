@@ -23,7 +23,7 @@ from PyQt5.QtWidgets import (
     QSpinBox, QProgressBar, QComboBox, QTabWidget, QTableWidget, QTableWidgetItem,
     QSplitter, QMessageBox, QStyledItemDelegate
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QRect
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QRect, QObject, QEvent
 from PyQt5.QtGui import QIcon, QColor, QFont, QCursor, QPainter
 
 # 파일 형식별 텍스트 추출 라이브러리
@@ -64,6 +64,44 @@ def setup_logging():
         ]
     )
     return logging.getLogger(__name__)
+
+
+class TableViewportEventFilter(QObject):
+    """테이블의 마우스 호버 이벤트 처리"""
+    def __init__(self, table, gui_instance):
+        super().__init__()
+        self.table = table
+        self.gui = gui_instance
+        self.last_row = -1
+
+    def eventFilter(self, obj, event):
+        """마우스 호버 시 미리보기 표시"""
+        if event.type() == QEvent.MouseMove:
+            pos = event.pos()
+            row = self.table.rowAt(pos.y())
+
+            if row >= 0 and row < self.table.rowCount():
+                if row != self.last_row:
+                    self.last_row = row
+                    # 크기 셀에서 matched_lines 가져오기
+                    size_item = self.table.item(row, 2)
+                    if size_item:
+                        matched_lines = size_item.data(Qt.UserRole + 1)
+                        if matched_lines and isinstance(matched_lines, list):
+                            # 미리보기 텍스트 생성
+                            preview_text = "📝 검색어 포함 문장:\n"
+                            keyword = getattr(self.gui, 'current_keyword', '')
+                            use_regex = getattr(self.gui, 'current_regex', False)
+
+                            for idx, line in enumerate(matched_lines, 1):
+                                if len(line) > 100:
+                                    line = line[:100] + "..."
+                                preview_text += f"{idx}. {line}\n"
+
+                            # 크기 셀의 ToolTip 업데이트
+                            size_item.setToolTip(preview_text)
+
+        return False
 
 
 class SearchHistory:
@@ -570,8 +608,8 @@ class SearchWorker(QThread):
                     if self._match_keyword(line, regex):
                         total_match_count += 1
                         content_match_count += 1
-                        # 매칭된 라인 저장 (최대 3줄)
-                        if len(matched_lines) < 3:
+                        # 매칭된 라인 저장 (최대 4줄)
+                        if len(matched_lines) < 4:
                             matched_lines.append(line.strip())
 
         # 매칭이 있으면 파일당 하나의 결과만 추가
@@ -902,6 +940,11 @@ class FSearchGUI(QMainWindow):
         self.table.setSelectionBehavior(0)  # 행 선택 모드
         self.table.setSortingEnabled(False)  # ✅ 정렬 기능 비활성화
         self.table.cellDoubleClicked.connect(self.open_file)  # 더블클릭 시 파일 실행 (QLabel/Item 모두 처리)
+
+        # 마우스 호버 이벤트 필터 설정 (미리보기용)
+        self.table_event_filter = TableViewportEventFilter(self.table, self)
+        self.table.viewport().installEventFilter(self.table_event_filter)
+
         self.tabs.addTab(self.table, "🗂️ 결과 (테이블)")
 
         # 텍스트 탭
@@ -1209,6 +1252,9 @@ class FSearchGUI(QMainWindow):
         size_item.setToolTip(str(result['size']) + " bytes")
         size_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
         size_item.setData(Qt.UserRole, result['full_path'])  # ✅ 파일 경로 저장
+        # matched_lines를 UserRole+1로 저장 (미리보기용)
+        matched_lines = result.get('matched_lines', [])
+        size_item.setData(Qt.UserRole + 1, matched_lines)
         self.table.setItem(current_row_count, 2, size_item)
 
         # 3: 수정 날짜 (왼쪽 정렬)
