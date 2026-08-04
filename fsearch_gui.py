@@ -1172,6 +1172,8 @@ class FSearchGUI(QMainWindow):
                 filename_label.setStyleSheet("padding: 3px;")
                 filename_label.setToolTip(result['full_path'])
                 filename_label.setProperty("file_path", result['full_path'])  # ✅ 파일 경로 저장
+                filename_label.setProperty("matched_lines", matched_lines)  # ✅ matched_lines 저장
+                filename_label.setProperty("row", current_row_count)  # ✅ 행 번호 저장
                 self.table.setCellWidget(current_row_count, 0, filename_label)
             else:
                 filename_item = QTableWidgetItem(filename_text)
@@ -1198,6 +1200,8 @@ class FSearchGUI(QMainWindow):
                 path_label.setStyleSheet("padding: 3px;")
                 path_label.setToolTip(path_text)
                 path_label.setProperty("file_path", result['full_path'])  # ✅ 파일 경로 저장
+                path_label.setProperty("matched_lines", matched_lines)  # ✅ matched_lines 저장
+                path_label.setProperty("row", current_row_count)  # ✅ 행 번호 저장
                 self.table.setCellWidget(current_row_count, 1, path_label)
             else:
                 path_item = QTableWidgetItem(path_text)
@@ -1442,16 +1446,36 @@ class FSearchGUI(QMainWindow):
         if row < 0 or row >= self.table.rowCount():
             return
 
-        # self.results에서 matched_lines 가져오기
+        # matched_lines 가져오기 (여러 소스에서 시도)
         matched_lines = None
+        found_source = None
+
+        # 1. self.results에서 먼저 확인
         if row < len(self.results):
             matched_lines = self.results[row].get('matched_lines', [])
+            if matched_lines:
+                found_source = "self.results"
 
-        # 없으면 테이블 아이템에서 조회
+        # 2. 테이블 아이템(QTableWidgetItem)에서 확인
         if not matched_lines:
             item = self.table.item(row, column)
             if item:
                 matched_lines = item.data(Qt.UserRole + 1)
+
+        # 3. QLabel 위젯의 property에서 확인
+        if not matched_lines:
+            widget = self.table.cellWidget(row, column)
+            if widget and isinstance(widget, QLabel):
+                matched_lines = widget.property("matched_lines")
+
+        # 4. 모든 컬럼의 QLabel에서 확인
+        if not matched_lines:
+            for col in range(self.table.columnCount()):
+                widget = self.table.cellWidget(row, col)
+                if widget and isinstance(widget, QLabel):
+                    matched_lines = widget.property("matched_lines")
+                    if matched_lines:
+                        break
 
         # matched_lines가 있으면 미리보기 표시
         if matched_lines and isinstance(matched_lines, list) and len(matched_lines) > 0:
