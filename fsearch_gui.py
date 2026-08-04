@@ -166,6 +166,11 @@ class SearchHistory:
         self.data['keywords'] = []
         self._save_data()
 
+    def clear_paths(self):
+        """모든 검색 경로 삭제"""
+        self.data['paths'] = []
+        self._save_data()
+
     def get_keywords(self):
         """모든 검색 키워드 반환"""
         return self.data.get('keywords', [])
@@ -738,6 +743,11 @@ class FSearchGUI(QMainWindow):
         browse_btn.setMaximumHeight(25)
         options_layout.addWidget(browse_btn)
 
+        self.clear_path_history_btn = QPushButton("🗑️ 경로 초기화")
+        self.clear_path_history_btn.clicked.connect(self.clear_path_history)
+        self.clear_path_history_btn.setMaximumHeight(25)
+        options_layout.addWidget(self.clear_path_history_btn)
+
         # 검색어 (검색 이력 드롭다운)
         options_layout.addWidget(QLabel("검색:"))
         self.keyword_input = QComboBox()
@@ -1130,6 +1140,23 @@ class FSearchGUI(QMainWindow):
             self.search_history.clear_keywords()
             self.keyword_input.clear()
             QMessageBox.information(self, "완료", "검색어가 모두 삭제되었습니다.")
+
+    def clear_path_history(self):
+        """모든 검색 경로 삭제"""
+        reply = QMessageBox.question(
+            self,
+            "경로 초기화",
+            "저장된 모든 검색 경로를 삭제하시겠습니까?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            self.search_history.clear_paths()
+            self.path_input.clear()
+            default_path = str(Path.cwd())
+            self.path_input.addItem(default_path)
+            self.path_input.setCurrentText(default_path)
+            QMessageBox.information(self, "완료", "경로가 모두 삭제되었습니다.")
 
     def toggle_button_blink(self):
         """버튼 깜박임 토글"""
