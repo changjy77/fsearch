@@ -66,44 +66,6 @@ def setup_logging():
     return logging.getLogger(__name__)
 
 
-class TableViewportEventFilter(QObject):
-    """테이블의 마우스 호버 이벤트 처리"""
-    def __init__(self, table, gui_instance):
-        super().__init__()
-        self.table = table
-        self.gui = gui_instance
-        self.last_row = -1
-
-    def eventFilter(self, obj, event):
-        """마우스 호버 시 미리보기 표시"""
-        if event.type() == QEvent.MouseMove:
-            pos = event.pos()
-            row = self.table.rowAt(pos.y())
-
-            if row >= 0 and row < self.table.rowCount():
-                if row != self.last_row:
-                    self.last_row = row
-                    # 크기 셀에서 matched_lines 가져오기
-                    size_item = self.table.item(row, 2)
-                    if size_item:
-                        matched_lines = size_item.data(Qt.UserRole + 1)
-                        if matched_lines and isinstance(matched_lines, list):
-                            # 미리보기 텍스트 생성
-                            preview_text = "📝 검색어 포함 문장:\n"
-                            keyword = getattr(self.gui, 'current_keyword', '')
-                            use_regex = getattr(self.gui, 'current_regex', False)
-
-                            for idx, line in enumerate(matched_lines, 1):
-                                if len(line) > 100:
-                                    line = line[:100] + "..."
-                                preview_text += f"{idx}. {line}\n"
-
-                            # 크기 셀의 ToolTip 업데이트
-                            size_item.setToolTip(preview_text)
-
-        return False
-
-
 class SearchHistory:
     """검색 이력 관리 - 검색어(최대 10개), 경로(최대 5개), 제외 폴더 통계"""
     def __init__(self):
@@ -940,10 +902,7 @@ class FSearchGUI(QMainWindow):
         self.table.setSelectionBehavior(0)  # 행 선택 모드
         self.table.setSortingEnabled(False)  # ✅ 정렬 기능 비활성화
         self.table.cellDoubleClicked.connect(self.open_file)  # 더블클릭 시 파일 실행 (QLabel/Item 모두 처리)
-
-        # 마우스 호버 이벤트 필터 설정 (미리보기용)
-        self.table_event_filter = TableViewportEventFilter(self.table, self)
-        self.table.viewport().installEventFilter(self.table_event_filter)
+        self.table.itemEntered.connect(self.on_table_item_entered)  # 마우스 호버 시 미리보기 표시
 
         self.tabs.addTab(self.table, "🗂️ 결과 (테이블)")
 
@@ -1467,6 +1426,34 @@ class FSearchGUI(QMainWindow):
     def refresh_cache(self):
         """캐시 새로고침"""
         QMessageBox.information(self, "캐시", "검색 시 파일 목록이 새로 수집됩니다.")
+
+    def on_table_item_entered(self, item):
+        """테이블 아이템 호버 시 미리보기 표시"""
+        if not item:
+            return
+
+        row = self.table.row(item)
+        col = self.table.column(item)
+
+        # 모든 셀에서 matched_lines 찾기
+        matched_lines = None
+
+        for column in range(self.table.columnCount()):
+            cell_item = self.table.item(row, column)
+            if cell_item:
+                matched_lines = cell_item.data(Qt.UserRole + 1)
+                if matched_lines:
+                    break
+
+        # matched_lines가 있으면 ToolTip 표시
+        if matched_lines and isinstance(matched_lines, list) and len(matched_lines) > 0:
+            preview_text = "📝 검색어 포함 문장:\n" + "-" * 60 + "\n"
+
+            for idx, line in enumerate(matched_lines, 1):
+                display_line = line if len(line) <= 100 else line[:100] + "..."
+                preview_text += f"{idx}. {display_line}\n"
+
+            item.setToolTip(preview_text)
 
     def open_file(self, row, column):
         """파일 또는 폴더 열기 (더블클릭 시 호출 - 검색 중/완료 모두 처리)"""
