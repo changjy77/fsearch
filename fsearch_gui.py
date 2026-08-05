@@ -192,6 +192,28 @@ class SearchHistory:
         return self.data.get('excluded_stats', {})
 
 
+class HoverableTableWidget(QTableWidget):
+    """호버 효과가 있는 테이블 위젯"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.last_hovered_row = -1
+        self.hover_callback = None
+
+    def set_hover_callback(self, callback):
+        """호버 콜백 설정"""
+        self.hover_callback = callback
+
+    def leaveEvent(self, event):
+        """마우스가 테이블을 벗어날 때"""
+        if self.last_hovered_row >= 0:
+            for col in range(self.columnCount()):
+                item = self.item(self.last_hovered_row, col)
+                if item:
+                    item.setBackground(QColor(255, 255, 255))
+            self.last_hovered_row = -1
+        super().leaveEvent(event)
+
+
 class SearchResultDelegate(QStyledItemDelegate):
     """검색 결과에서 검색 단어를 굵게 표시하는 delegate"""
 
@@ -906,7 +928,7 @@ class FSearchGUI(QMainWindow):
         self.tabs = QTabWidget()
 
         # 테이블 탭
-        self.table = QTableWidget()
+        self.table = HoverableTableWidget()
         self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels([
             "파일명",
@@ -1493,9 +1515,26 @@ class FSearchGUI(QMainWindow):
         QMessageBox.information(self, "캐시", "검색 시 파일 목록이 새로 수집됩니다.")
 
     def on_table_cell_entered(self, row, column):
-        """테이블 셀 호버 시 미리보기 표시 (QLabel 위젯과 QTableWidgetItem 모두 처리)"""
+        """테이블 셀 호버 시 미리보기 표시 및 행 하이라이트 (QLabel 위젯과 QTableWidgetItem 모두 처리)"""
         if row < 0 or row >= self.table.rowCount():
             return
+
+        # 이전 호버 행의 배경색 복원
+        if self.table.last_hovered_row >= 0 and self.table.last_hovered_row != row:
+            for col in range(self.table.columnCount()):
+                item = self.table.item(self.table.last_hovered_row, col)
+                if item:
+                    item.setBackground(QColor(255, 255, 255))  # 흰색으로 복원
+
+        # 현재 행의 배경색을 옅은 그레이로 설정
+        gray_color = QColor(240, 240, 240)  # 옅은 그레이 색상
+        for col in range(self.table.columnCount()):
+            item = self.table.item(row, col)
+            if item:
+                item.setBackground(gray_color)
+
+        # 현재 호버 행 저장
+        self.table.last_hovered_row = row
 
         # matched_lines 가져오기 (여러 소스에서 시도)
         matched_lines = None
