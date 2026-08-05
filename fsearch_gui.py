@@ -207,9 +207,14 @@ class HoverableTableWidget(QTableWidget):
         """마우스가 테이블을 벗어날 때"""
         if self.last_hovered_row >= 0:
             for col in range(self.columnCount()):
+                # QTableWidgetItem 처리
                 item = self.item(self.last_hovered_row, col)
                 if item:
                     item.setBackground(QColor(255, 255, 255))
+                # QLabel 위젯 처리
+                widget = self.cellWidget(self.last_hovered_row, col)
+                if widget and isinstance(widget, QLabel):
+                    widget.setStyleSheet("background-color: white;")
             self.last_hovered_row = -1
         super().leaveEvent(event)
 
@@ -1523,16 +1528,26 @@ class FSearchGUI(QMainWindow):
         # 이전 호버 행의 배경색 복원
         if self.table.last_hovered_row >= 0 and self.table.last_hovered_row != row:
             for col in range(self.table.columnCount()):
+                # QTableWidgetItem 처리
                 item = self.table.item(self.table.last_hovered_row, col)
                 if item:
                     item.setBackground(QColor(255, 255, 255))  # 흰색으로 복원
+                # QLabel 위젯 처리
+                widget = self.table.cellWidget(self.table.last_hovered_row, col)
+                if widget and isinstance(widget, QLabel):
+                    widget.setStyleSheet("background-color: white;")
 
         # 현재 행의 배경색을 진한 그레이로 설정
         gray_color = QColor(200, 200, 200)  # 진한 그레이 색상
         for col in range(self.table.columnCount()):
+            # QTableWidgetItem 처리
             item = self.table.item(row, col)
             if item:
                 item.setBackground(gray_color)
+            # QLabel 위젯 처리
+            widget = self.table.cellWidget(row, col)
+            if widget and isinstance(widget, QLabel):
+                widget.setStyleSheet("background-color: rgb(200, 200, 200);")
 
         # 현재 호버 행 저장
         self.table.last_hovered_row = row
