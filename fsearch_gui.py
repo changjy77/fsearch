@@ -616,7 +616,8 @@ class SearchWorker(QThread):
                 'size': file_size,
                 'modified': mod_time,
                 'match_count': total_match_count,
-                'matched_lines': matched_lines  # 매칭된 라인 추가
+                'matched_lines': matched_lines,  # 매칭된 라인 추가
+                'extension': file_path.suffix.lower()  # 파일 확장자 추가
             })
 
         return results
@@ -1687,10 +1688,38 @@ class FSearchGUI(QMainWindow):
             if hasattr(self, 'logger'):
                 self.logger.error(error_msg)
 
+    def calculate_relevance_score(self, result):
+        """파일의 업무 연관도 점수 계산"""
+        keyword = self.current_keyword if hasattr(self, 'current_keyword') else ""
+        filename = result.get('filename', '').lower()
+        extension = result.get('extension', '').lower()
+        match_count = result.get('match_count', 0)
+
+        score = 0
+
+        # 1. 파일명에 검색어 포함: 최우선
+        if keyword and keyword.lower() in filename:
+            score += 1000
+
+        # 2. 문서 타입 우선순위
+        doc_extensions = {'.doc': 50, '.docx': 50, '.pdf': 40, '.txt': 30,
+                         '.md': 30, '.xlsx': 40, '.xls': 40, '.hwp': 50}
+        score += doc_extensions.get(extension, 0)
+
+        # 3. 소스코드 제외 (낮은 우선순위)
+        code_extensions = {'.py', '.js', '.cpp', '.java', '.cs', '.go', '.rs'}
+        if extension in code_extensions:
+            score -= 10
+
+        # 4. match_count 기반 (기본 정렬 기준)
+        score += match_count * 10
+
+        return score
+
     def sort_results_by_match_count(self):
-        """검색 단어수(match_count)로 내림차순 정렬하고 테이블 재구성"""
-        # self.results를 match_count 기준 내림차순으로 정렬
-        self.results.sort(key=lambda x: x['match_count'], reverse=True)
+        """업무 연관도 기준으로 정렬하고 테이블 재구성"""
+        # self.results를 연관도 점수 기준 내림차순으로 정렬
+        self.results.sort(key=lambda x: self.calculate_relevance_score(x), reverse=True)
 
         # 테이블 초기화
         self.table.setRowCount(0)
