@@ -1526,8 +1526,8 @@ class FSearchGUI(QMainWindow):
                 if item:
                     item.setBackground(QColor(255, 255, 255))  # 흰색으로 복원
 
-        # 현재 행의 배경색을 옅은 그레이로 설정
-        gray_color = QColor(240, 240, 240)  # 옅은 그레이 색상
+        # 현재 행의 배경색을 진한 그레이로 설정
+        gray_color = QColor(200, 200, 200)  # 진한 그레이 색상
         for col in range(self.table.columnCount()):
             item = self.table.item(row, col)
             if item:
