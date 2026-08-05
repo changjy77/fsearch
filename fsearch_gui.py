@@ -11,6 +11,8 @@ import json
 import subprocess
 import logging
 import zipfile
+import sqlite3
+import threading
 from datetime import datetime
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -301,6 +303,45 @@ class SearchResultDelegate(QStyledItemDelegate):
             painter.drawText(x, y, remaining_text)
 
 
+class TextExtractionCache:
+    """파일에서 추출한 텍스트를 디스크(SQLite)에 캐싱 - 재검색 시 파싱 재사용"""
+
+    def __init__(self):
+        cache_dir = Path.home() / ".fsearch"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        self.db_path = cache_dir / "text_cache.db"
+        conn = sqlite3.connect(str(self.db_path))
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS text_cache "
+            "(path TEXT PRIMARY KEY, mtime REAL, size INTEGER, text TEXT)"
+        )
+        conn.commit()
+        conn.close()
+
+    def load_for_prefix(self, path_prefix):
+        """지정 경로 하위의 캐시만 로드하여 {경로: (mtime, size, text)} 반환"""
+        conn = sqlite3.connect(str(self.db_path))
+        like_pattern = path_prefix.rstrip("\\/") + "%"
+        rows = conn.execute(
+            "SELECT path, mtime, size, text FROM text_cache WHERE path LIKE ?",
+            (like_pattern,)
+        ).fetchall()
+        conn.close()
+        return {path: (mtime, size, text) for path, mtime, size, text in rows}
+
+    def save_entries(self, entries):
+        """{경로: (mtime, size, text)} 항목들을 일괄 저장"""
+        if not entries:
+            return
+        conn = sqlite3.connect(str(self.db_path))
+        conn.executemany(
+            "INSERT OR REPLACE INTO text_cache (path, mtime, size, text) VALUES (?, ?, ?, ?)",
+            [(path, mtime, size, text) for path, (mtime, size, text) in entries.items()]
+        )
+        conn.commit()
+        conn.close()
+
+
 class SearchWorker(QThread):
     """검색을 별도 스레드에서 실행"""
     progress = pyqtSignal(int)
@@ -326,7 +367,10 @@ class SearchWorker(QThread):
         self.skip_large_files = skip_large_files
         self.results = []
         self.excluded_files = []  # 제외된 파일 목록
-        self.file_cache = {}  # 실시간 캐싱: 파일 경로 → 텍스트
+        self.text_cache = TextExtractionCache()  # 디스크 캐시 관리자
+        self.file_cache = {}  # 메모리 캐싱: 파일 경로 → (mtime, size, 텍스트)
+        self.new_cache_entries = {}  # 이번 검색에서 새로 추출된 항목 (디스크 저장용)
+        self.cache_lock = threading.Lock()  # 캐시 동시 접근 보호
         self.skipped_large_files = 0  # 스킵된 대용량 파일 갯수
         self.skipped_files_list = []  # 스킵된 대용량파일 목록
         self.stop_flag = False  # 검색 중단 플래그
@@ -354,6 +398,9 @@ class SearchWorker(QThread):
                     return
             else:
                 regex = None
+
+            # 디스크 캐시 로드 (같은 폴더 재검색 시 텍스트 추출 재사용)
+            self.file_cache = self.text_cache.load_for_prefix(self.path)
 
             # 병렬 검색
             results = []
@@ -393,6 +440,8 @@ class SearchWorker(QThread):
 
         except Exception as e:
             self.error.emit(f"오류 발생: {str(e)}")
+        finally:
+            self.text_cache.save_entries(self.new_cache_entries)
 
     def _collect_files(self) -> List[Path]:
         """파일 수집 - 지정된 파일 형식만"""
@@ -455,13 +504,31 @@ class SearchWorker(QThread):
         return files
 
     def _extract_text(self, file_path: Path) -> str:
-        """파일 형식별로 텍스트 추출 (캐싱 지원)"""
+        """파일 형식별로 텍스트 추출 (디스크 캐시 지원 - 재검색 시 재사용)"""
         file_path_str = str(file_path)
 
-        # 캐시 확인
-        if file_path_str in self.file_cache:
-            return self.file_cache[file_path_str]
+        try:
+            stat = file_path.stat()
+            cache_key = (stat.st_mtime, stat.st_size)
+        except OSError:
+            return self._extract_text_impl(file_path)
 
+        # 캐시 확인 (파일이 변경되지 않았으면 재사용)
+        cached = self.file_cache.get(file_path_str)
+        if cached and (cached[0], cached[1]) == cache_key:
+            return cached[2]
+
+        text = self._extract_text_impl(file_path)
+
+        with self.cache_lock:
+            entry = (cache_key[0], cache_key[1], text)
+            self.file_cache[file_path_str] = entry
+            self.new_cache_entries[file_path_str] = entry
+
+        return text
+
+    def _extract_text_impl(self, file_path: Path) -> str:
+        """파일 형식별 텍스트 추출 (실제 파싱 로직)"""
         ext = file_path.suffix.lower()
 
         try:
