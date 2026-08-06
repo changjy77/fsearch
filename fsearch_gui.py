@@ -453,7 +453,8 @@ class SearchWorker(QThread):
             '.xls', '.xlsx',      # 엑셀파일
             '.txt',               # 텍스트파일
             '.html', '.htm',      # HTML파일
-            '.md'                 # 마크다운파일
+            '.md',                # 마크다운파일
+            '.csv'                # CSV파일
         }
 
         files = []
@@ -532,8 +533,8 @@ class SearchWorker(QThread):
         ext = file_path.suffix.lower()
 
         try:
-            if ext == '.txt' or ext == '.md':
-                # 텍스트/마크다운 파일
+            if ext == '.txt' or ext == '.md' or ext == '.csv':
+                # 텍스트/마크다운/CSV 파일
                 with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                     return f.read()
 
