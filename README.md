@@ -43,10 +43,11 @@
 | **검색 단어수** | 파일 내 검색어 출현 횟수 |
 
 ### 📁 지원 파일 형식
-- **문서**: Word (.doc, .docx), PDF (.pdf)
+- **문서**: Word (.doc, .docx), PowerPoint (.ppt, .pptx), PDF (.pdf)
 - **텍스트**: 텍스트 (.txt), 마크다운 (.md), HTML (.html, .htm)
 - **한글**: 한글 (.hwp, .hwpx)
 - **스프레드시트**: Excel (.xls, .xlsx)
+- **데이터**: CSV (.csv), JSON (.json), XML (.xml)
 
 ### 🚀 편의 기능
 - **빠른 실행**: 결과 더블클릭으로 파일/폴더 열기
@@ -80,7 +81,7 @@ git clone https://github.com/changjy77/fsearch.git
 cd fsearch
 
 # 2. 필수 라이브러리 설치
-pip install PyQt5 python-docx PyPDF2 openpyxl
+pip install PyQt5 python-docx PyPDF2 openpyxl python-pptx
 
 # 3. 실행
 python fsearch_gui.py
