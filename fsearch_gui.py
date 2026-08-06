@@ -558,7 +558,8 @@ class SearchWorker(QThread):
                     text = '\n'.join([para.text for para in doc.paragraphs])
                     return text
                 except:
-                    return ""
+                    # 임베디드 첨부 등으로 python-docx 파싱 실패 시 document.xml 직접 추출로 우회
+                    return self._extract_docx_raw_xml(file_path)
 
             elif ext == '.pptx' and Presentation:
                 # 파워포인트 문서
@@ -642,6 +643,17 @@ class SearchWorker(QThread):
                 return ""
 
         except Exception as e:
+            return ""
+
+    def _extract_docx_raw_xml(self, file_path: Path) -> str:
+        """word/document.xml에서 텍스트 태그를 직접 추출 (python-docx 파싱 실패 시 우회용)"""
+        try:
+            with zipfile.ZipFile(file_path) as z:
+                xml = z.read('word/document.xml').decode('utf-8', errors='ignore')
+            paragraphs = re.findall(r'<w:p(?:\s[^>]*)?>.*?</w:p>', xml, re.DOTALL)
+            lines = [''.join(re.findall(r'<w:t[^>]*>([^<]*)</w:t>', p)) for p in paragraphs]
+            return '\n'.join(lines)
+        except:
             return ""
 
     def _search_file(self, file_path: Path, regex):
