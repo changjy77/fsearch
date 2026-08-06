@@ -45,6 +45,11 @@ except ImportError:
     load_workbook = None
 
 try:
+    from pptx import Presentation
+except ImportError:
+    Presentation = None
+
+try:
     import html2text
 except ImportError:
     html2text = None
@@ -448,6 +453,7 @@ class SearchWorker(QThread):
         # 허용된 파일 확장자
         allowed_extensions = {
             '.doc', '.docx',      # 워드파일
+            '.ppt', '.pptx',      # 파워포인트파일
             '.hwp', '.hwpx',      # 한글파일
             '.pdf',               # PDF파일
             '.xls', '.xlsx',      # 엑셀파일
@@ -550,6 +556,19 @@ class SearchWorker(QThread):
                 try:
                     doc = Document(file_path)
                     text = '\n'.join([para.text for para in doc.paragraphs])
+                    return text
+                except:
+                    return ""
+
+            elif ext == '.pptx' and Presentation:
+                # 파워포인트 문서
+                try:
+                    prs = Presentation(file_path)
+                    text = ""
+                    for slide in prs.slides:
+                        for shape in slide.shapes:
+                            if shape.has_text_frame:
+                                text += shape.text_frame.text + "\n"
                     return text
                 except:
                     return ""
@@ -721,6 +740,8 @@ class SearchWorker(QThread):
             '.pdf': '📕',
             '.doc': '📘',
             '.docx': '📘',
+            '.ppt': '📙',
+            '.pptx': '📙',
             '.hwp': '📗',
             '.hwpx': '📗',
             '.xls': '📊',
