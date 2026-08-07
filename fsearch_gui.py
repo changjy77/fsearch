@@ -13,6 +13,7 @@ import logging
 import zipfile
 import sqlite3
 import threading
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -360,6 +361,12 @@ class SearchWorker(QThread):
     skipped_files_count = pyqtSignal(int)  # 스킵된 파일 갯수
     skipped_files_updated = pyqtSignal(list)  # 스킵된 대용량파일 목록
 
+    # 내용 추출 가능한 확장자 (zip 내부 검색 시에도 동일하게 사용)
+    EXTRACTABLE_EXTENSIONS = {
+        '.doc', '.docx', '.ppt', '.pptx', '.hwp', '.hwpx', '.pdf',
+        '.xls', '.xlsx', '.txt', '.html', '.htm', '.md', '.csv', '.json', '.xml'
+    }
+
     def __init__(self, keyword, path, ignore_dirs, name_only, content_only, use_regex, max_workers, skip_large_files=False):
         super().__init__()
         self.keyword = keyword
@@ -450,20 +457,8 @@ class SearchWorker(QThread):
 
     def _collect_files(self) -> List[Path]:
         """파일 수집 - 지정된 파일 형식만"""
-        # 허용된 파일 확장자
-        allowed_extensions = {
-            '.doc', '.docx',      # 워드파일
-            '.ppt', '.pptx',      # 파워포인트파일
-            '.hwp', '.hwpx',      # 한글파일
-            '.pdf',               # PDF파일
-            '.xls', '.xlsx',      # 엑셀파일
-            '.txt',               # 텍스트파일
-            '.html', '.htm',      # HTML파일
-            '.md',                # 마크다운파일
-            '.csv',               # CSV파일
-            '.json',               # JSON파일
-            '.xml'                # XML파일
-        }
+        # 허용된 파일 확장자 (zip은 내부 파일을 풀어서 검색)
+        allowed_extensions = SearchWorker.EXTRACTABLE_EXTENSIONS | {'.zip'}
 
         files = []
         self.excluded_files = []  # 초기화
@@ -679,6 +674,10 @@ class SearchWorker(QThread):
             self.skipped_files_count.emit(self.skipped_large_files)
             return results
 
+        # zip 압축파일은 내부 파일을 풀어서 검색
+        if file_path.suffix.lower() == '.zip':
+            return self._search_zip_file(file_path, regex, file_size, mod_time)
+
         # 파일명과 폴더 경로 분리
         filename = file_path.name
         folder_path = str(file_path.parent)
@@ -727,6 +726,92 @@ class SearchWorker(QThread):
             })
 
         return results
+
+    def _search_zip_file(self, file_path: Path, regex, zip_size, mod_time):
+        """zip 압축파일 내부 문서를 풀어서 검색 (내부 파일마다 결과 하나씩)"""
+        results = []
+        folder_path = str(file_path.parent)
+        zip_icon = SearchWorker.get_file_icon(file_path.name)
+
+        try:
+            with zipfile.ZipFile(file_path) as zf:
+                for info in zf.infolist():
+                    if info.is_dir():
+                        continue
+                    inner_name = Path(info.filename).name
+                    ext = Path(info.filename).suffix.lower()
+                    if ext not in SearchWorker.EXTRACTABLE_EXTENSIONS:
+                        continue
+                    if self.skip_large_files and info.file_size > 10 * 1024 * 1024:
+                        continue
+
+                    match_count = 0
+                    matched_lines = []
+
+                    # 내부 파일명 검색
+                    if not self.content_only:
+                        if self._match_keyword(inner_name, regex):
+                            match_count += 1
+
+                    # 내부 파일 내용 검색
+                    if not self.name_only:
+                        text = self._extract_zip_entry_text(file_path, zf, info, ext)
+                        if text:
+                            for line in text.split('\n'):
+                                if self._match_keyword(line, regex):
+                                    match_count += 1
+                                    if len(matched_lines) < 4:
+                                        matched_lines.append(line.strip())
+
+                    if match_count > 0:
+                        inner_icon = SearchWorker.get_file_icon(inner_name)
+                        results.append({
+                            'type': 'file_summary',
+                            'filename': f"{zip_icon} {file_path.name} → {inner_icon} {inner_name}",
+                            'folder_path': folder_path,
+                            'full_path': str(file_path),
+                            'size': zip_size,
+                            'modified': mod_time,
+                            'match_count': match_count,
+                            'matched_lines': matched_lines,
+                            'extension': ext
+                        })
+        except:
+            pass
+
+        return results
+
+    def _extract_zip_entry_text(self, zip_path: Path, zf, info, ext) -> str:
+        """zip 내부 파일의 텍스트 추출 (임시파일로 풀어서 기존 추출 로직 재사용, 캐싱 지원)"""
+        cache_key_str = f"{zip_path}!{info.filename}"
+        cache_key = (info.CRC, info.file_size)
+
+        cached = self.file_cache.get(cache_key_str)
+        if cached and (cached[0], cached[1]) == cache_key:
+            return cached[2]
+
+        tmp_path = None
+        try:
+            data = zf.read(info.filename)
+            with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+                tmp.write(data)
+                tmp_path = tmp.name
+            text = self._extract_text_impl(Path(tmp_path))
+        except:
+            text = ""
+        finally:
+            if tmp_path:
+                try:
+                    os.unlink(tmp_path)
+                except:
+                    pass
+
+        with self.cache_lock:
+            entry = (cache_key[0], cache_key[1], text)
+            self.file_cache[cache_key_str] = entry
+            self.new_cache_entries[cache_key_str] = entry
+
+        return text
 
     def _match_keyword(self, text: str, regex):
         """키워드 매칭"""
