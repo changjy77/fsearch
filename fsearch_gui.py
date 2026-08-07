@@ -347,6 +347,15 @@ class TextExtractionCache:
         conn.commit()
         conn.close()
 
+    def delete_entries(self, keys):
+        """지정된 캐시 키(경로 또는 zip경로!내부파일명)들을 일괄 삭제"""
+        if not keys:
+            return
+        conn = sqlite3.connect(str(self.db_path))
+        conn.executemany("DELETE FROM text_cache WHERE path = ?", [(k,) for k in keys])
+        conn.commit()
+        conn.close()
+
 
 class SearchWorker(QThread):
     """검색을 별도 스레드에서 실행"""
@@ -413,6 +422,21 @@ class SearchWorker(QThread):
 
             # 디스크 캐시 로드 (같은 폴더 재검색 시 텍스트 추출 재사용)
             self.file_cache = self.text_cache.load_for_prefix(self.path)
+
+            # 실제로 더 이상 존재하지 않는 파일의 캐시 항목 정리
+            # (zip경로!내부파일명 형태는 zip 파일 자체의 존재 여부로 판단)
+            exists_checked = {}
+            stale_keys = []
+            for cache_key in self.file_cache:
+                outer_path = cache_key.split('!', 1)[0] if '!' in cache_key else cache_key
+                if outer_path not in exists_checked:
+                    exists_checked[outer_path] = Path(outer_path).exists()
+                if not exists_checked[outer_path]:
+                    stale_keys.append(cache_key)
+            if stale_keys:
+                for key in stale_keys:
+                    del self.file_cache[key]
+                self.text_cache.delete_entries(stale_keys)
 
             # 병렬 검색
             results = []
