@@ -381,6 +381,9 @@ class SearchWorker(QThread):
     def __init__(self, keyword, path, ignore_dirs, name_only, content_only, use_regex, max_workers, skip_large_files=False):
         super().__init__()
         self.keyword = keyword
+        self.keyword_lower = keyword.lower()
+        # 대소문자무시 사전확인용(정규식 검색 모드가 아닐 때도 lower() 복사본 없이 빠르게 존재 여부 판단)
+        self.literal_pattern = re.compile(re.escape(keyword), re.IGNORECASE)
         self.path = path
         self.ignore_dirs = set(ignore_dirs)
         self.name_only = name_only
@@ -748,14 +751,24 @@ class SearchWorker(QThread):
             # 파일에서 텍스트 추출
             text = self._extract_text(file_path)
             if text:
-                # 추출된 텍스트를 줄 단위로 검색
-                for line in text.split('\n'):
-                    if self._match_keyword(line, regex):
-                        total_match_count += 1
-                        content_match_count += 1
-                        # 매칭된 라인 저장 (최대 4줄)
-                        if len(matched_lines) < 4:
-                            matched_lines.append(line.strip())
+                if regex:
+                    for line in text.split('\n'):
+                        if regex.search(line):
+                            total_match_count += 1
+                            content_match_count += 1
+                            # 매칭된 라인 저장 (최대 4줄)
+                            if len(matched_lines) < 4:
+                                matched_lines.append(line.strip())
+                else:
+                    # 정규식 엔진의 대소문자무시 매칭으로 사전확인(lower() 복사본 생성 없이 존재 여부만 빠르게 판단)
+                    if self.literal_pattern.search(text):
+                        for line in text.split('\n'):
+                            if self.keyword_lower in line.lower():
+                                total_match_count += 1
+                                content_match_count += 1
+                                # 매칭된 라인 저장 (최대 4줄)
+                                if len(matched_lines) < 4:
+                                    matched_lines.append(line.strip())
 
         # 매칭이 있으면 파일당 하나의 결과만 추가
         if total_match_count > 0:
@@ -803,11 +816,19 @@ class SearchWorker(QThread):
                     if not self.name_only:
                         text = self._extract_zip_entry_text(file_path, zf, info, ext)
                         if text:
-                            for line in text.split('\n'):
-                                if self._match_keyword(line, regex):
-                                    match_count += 1
-                                    if len(matched_lines) < 4:
-                                        matched_lines.append(line.strip())
+                            if regex:
+                                for line in text.split('\n'):
+                                    if regex.search(line):
+                                        match_count += 1
+                                        if len(matched_lines) < 4:
+                                            matched_lines.append(line.strip())
+                            else:
+                                if self.literal_pattern.search(text):
+                                    for line in text.split('\n'):
+                                        if self.keyword_lower in line.lower():
+                                            match_count += 1
+                                            if len(matched_lines) < 4:
+                                                matched_lines.append(line.strip())
 
                     if match_count > 0:
                         inner_icon = SearchWorker.get_file_icon(inner_name)
@@ -864,7 +885,7 @@ class SearchWorker(QThread):
         if regex:
             return regex.search(text) is not None
         else:
-            return self.keyword.lower() in text.lower()
+            return self.keyword_lower in text.lower()
 
     def _is_binary(self, path: Path) -> bool:
         """바이너리 파일 확인"""
