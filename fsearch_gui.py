@@ -46,9 +46,10 @@ except ImportError:
     PdfReader = None
 
 try:
-    from openpyxl import load_workbook
+    from openpyxl import load_workbook, Workbook
 except ImportError:
     load_workbook = None
+    Workbook = None
 
 try:
     from pptx import Presentation
@@ -1312,6 +1313,11 @@ class FSearchGUI(QMainWindow):
         self.performance_btn.setEnabled(False)
         options2_layout.addWidget(self.performance_btn)
 
+        self.export_excel_btn = QPushButton("📊 엑셀로 내보내기")
+        self.export_excel_btn.clicked.connect(self.export_to_excel)
+        self.export_excel_btn.setMaximumHeight(25)
+        options2_layout.addWidget(self.export_excel_btn)
+
         layout.addWidget(options2_container)
 
         # ===== 진행바 =====
@@ -2181,6 +2187,54 @@ class FSearchGUI(QMainWindow):
         # 정렬된 results로 테이블 재구성
         for result in self.results:
             self.add_result_row(result)
+
+    def export_to_excel(self):
+        """현재 결과 테이블에 표시된 내용을 엑셀 파일로 내보내기"""
+        if not Workbook:
+            QMessageBox.warning(self, "엑셀 내보내기", "openpyxl 라이브러리가 설치되어 있지 않습니다.")
+            return
+
+        if not self.results:
+            QMessageBox.information(self, "엑셀 내보내기", "내보낼 검색 결과가 없습니다.")
+            return
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "엑셀로 저장", "fsearch_결과.xlsx", "Excel 파일 (*.xlsx)"
+        )
+        if not file_path:
+            return
+
+        try:
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "검색 결과"
+            ws.append(["파일명", "경로", "크기", "수정 날짜", "검색 단어수"])
+
+            for result in self.results:
+                size = result['size']
+                if size < 1024:
+                    size_str = f"{size} B"
+                elif size < 1024 * 1024:
+                    size_str = f"{size / 1024:.1f} KB"
+                else:
+                    size_str = f"{size / (1024 * 1024):.1f} MB"
+
+                filename = Path(result['full_path']).name
+                if 'inner_name' in result:
+                    filename = f"{filename} → {result['inner_name']}"
+
+                ws.append([
+                    filename,
+                    result['folder_path'],
+                    size_str,
+                    result['modified'],
+                    result.get('match_count', 0)
+                ])
+
+            wb.save(file_path)
+            QMessageBox.information(self, "엑셀 내보내기", f"저장 완료:\n{file_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "엑셀 내보내기 오류", f"저장 중 오류가 발생했습니다:\n{e}")
 
     def update_excluded_files(self, excluded_files):
         """제외된 파일 목록 업데이트"""
