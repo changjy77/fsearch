@@ -433,8 +433,10 @@ class SearchWorker(QThread):
                 regex = None
 
             # 디스크 캐시 로드 (같은 폴더 재검색 시 텍스트 추출 재사용)
+            # 파일명만 검색할 때는 텍스트 추출 자체를 하지 않으므로 캐시 로드를 생략
             t_phase_start = time.time()
-            self.file_cache = self.text_cache.load_for_prefix(self.path)
+            if not self.name_only:
+                self.file_cache = self.text_cache.load_for_prefix(self.path)
             self.timing['cache_load'] = time.time() - t_phase_start
 
             # 실제로 더 이상 존재하지 않는 파일의 캐시 항목 정리
