@@ -1019,13 +1019,11 @@ class FSearchGUI(QMainWindow):
         self.path_input.setEditable(True)
         self.path_input.setMaximumHeight(25)
 
-        # 저장된 경로 로드
-        default_path = str(Path.cwd())
+        # 저장된 경로 로드 (드롭다운 목록만 채우고, 표시되는 기본값은 비워둠)
         saved_paths = self.search_history.get_paths()
         if saved_paths:
             self.path_input.addItems(saved_paths)
-        self.path_input.insertItem(0, default_path)
-        self.path_input.setCurrentIndex(0)
+        self.path_input.setCurrentText("")
 
         options_layout.addWidget(self.path_input)
 
@@ -1444,9 +1442,6 @@ class FSearchGUI(QMainWindow):
         if reply == QMessageBox.Yes:
             self.search_history.clear_paths()
             self.path_input.clear()
-            default_path = str(Path.cwd())
-            self.path_input.addItem(default_path)
-            self.path_input.setCurrentText(default_path)
             QMessageBox.information(self, "완료", "경로가 모두 삭제되었습니다.")
 
     def toggle_button_blink(self):
