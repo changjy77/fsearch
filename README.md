@@ -1,6 +1,6 @@
 # 🔍 fsearch - Windows 파일 검색 도구
 
-![Version](https://img.shields.io/badge/version-1.1.0-blue)
+![Version](https://img.shields.io/badge/version-1.2.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Python](https://img.shields.io/badge/python-3.12-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)
@@ -25,13 +25,14 @@
 ### ⚡ 성능 최적화
 - **멀티스레드**: 기본 16개 스레드 (1~32 조정 가능)
 - **대용량 파일 스킵**: 10MB 이상 자동 제외
-- **메모리 캐싱**: 검색 결과 캐싱으로 빠른 재검색
-- **평균 검색 속도**: 약 수초 (크기/스레드/파일 형식에 따라 다름)
+- **디스크 캐싱**: 추출한 텍스트를 SQLite(`~/.fsearch/text_cache.db`)에 저장해, 같은 폴더를 다른 검색어로 재검색할 때 파싱을 건너뛰고 재사용
+- **zip 내부 캐싱**: 압축파일 내부 파일은 CRC+크기 기준으로 변경 감지 — zip 안의 파일 하나만 바뀌어도 그 파일만 재추출
+- **평균 검색 속도**: 약 수초 (크기/스레드/파일 형식에 따라 다름, 캐시 적중 시 훨씬 빠름)
 
 ### 📂 폴더 관리
 - **폴더 제외**: 검색에서 제외할 폴더 설정 (AppData, Program Files 등)
 - **최근 경로**: 자주 검색하는 경로 저장 (최대 5개)
-- **제외 통계**: 자주 제외하는 폴더 자동 기록 (최대 5개)
+- **제외 통계**: 자주 제외하는 폴더를 자동 기록해 상위 3개를 노출
 
 ### 📊 검색 결과
 | 컬럼 | 내용 |
@@ -41,6 +42,10 @@
 | **크기** | B, KB, MB 단위 자동 변환 |
 | **수정 날짜** | 마지막 수정 날짜/시간 |
 | **검색 단어수** | 파일 내 검색어 출현 횟수 |
+
+- **업무 연관도 정렬**: 단순 매칭 횟수가 아니라 휴리스틱 점수(파일명 일치, 문서 형식 가중치, 소스코드 감점 등)로 정렬
+- **행 호버 강조**: 마우스를 올린 행이 진한 회색으로 표시
+- **호버 미리보기**: 매칭된 라인 최대 4줄을 툴팁으로 표시, 파일명에만 검색어가 있으면 "본문에 검색어 없음"으로 별도 안내
 
 ### 📁 지원 파일 형식
 - **문서**: Word (.doc, .docx), PowerPoint (.ppt, .pptx), PDF (.pdf)
@@ -52,7 +57,7 @@
 
 ### 🚀 편의 기능
 - **빠른 실행**: 결과 더블클릭으로 파일/폴더 열기
-- **검색 이력**: 최근 검색 키워드 10개 저장
+- **검색 이력**: 최근 검색 키워드 10개, 검색 경로 5개 저장 (각각 초기화 버튼 제공)
 - **성능 측정**: 검색 소요 시간 표시
 - **자동 로깅**: 홈 디렉토리의 `.fsearch/logs` 폴더에 저장
 - **대용량파일 로그**: 스킵된 파일 목록 확인 가능
@@ -193,37 +198,53 @@ python fsearch_gui.py
 - **언어**: Python 3.12
 - **GUI**: PyQt5 (5.15.9+)
 - **멀티스레드**: ThreadPoolExecutor (기본 16개)
+- **캐싱**: sqlite3 (텍스트 추출 결과 디스크 캐싱)
 - **파일 처리**:
-  - python-docx (Word 문서)
+  - python-docx (Word 문서, 파싱 실패 시 zip 내부 XML 직접 추출로 우회)
+  - python-pptx (PowerPoint 문서)
   - PyPDF2 (PDF)
-  - openpyxl (Excel)
-  - zipfile (한글 .hwp/.hwpx)
+  - openpyxl / xlrd (Excel .xlsx / .xls)
+  - zipfile (한글 .hwp/.hwpx, .zip 내부 검색)
 
 ### 프로젝트 구조
 ```
 fsearch/
-├── fsearch_gui.py          # 메인 프로그램 (~1650줄)
+├── fsearch_gui.py          # 메인 프로그램 (~2,200줄)
 ├── README.md               # 사용 설명서
+├── FEATURES.md             # 기능 상세 정리 문서
 ├── .gitignore              # Git 무시 파일
 └── dist/
-    └── fsearch.exe         # 배포용 실행 파일 (49MB)
+    └── fsearch.exe         # 배포용 실행 파일 (약 52MB)
 ```
 
 ### 주요 클래스
 - **SearchWorker**: QThread 기반 검색 엔진
 - **SearchHistory**: 검색 이력 및 설정 관리
+- **TextExtractionCache**: SQLite 기반 텍스트 추출 결과 캐시 관리
+- **HoverableTableWidget**: 행 호버 강조를 지원하는 테이블 위젯
 - **FSearchGUI**: 메인 UI 윈도우
 
 ### 핵심 기능
 - **검색 엔진**: ThreadPoolExecutor로 병렬 파일 검색
-- **파일 처리**: 7+ 파일 형식 지원 (Word, PDF, Excel, 한글, 텍스트 등)
-- **UI/UX**: PyQt5 탭 인터페이스 (테이블/텍스트 결과)
-- **검색 결과 강조**: 검색어를 붉은색으로 표시
+- **파일 처리**: 15개 확장자 + zip 내부 검색 지원 (Word, PowerPoint, PDF, Excel, 한글, CSV/JSON/XML 등)
+- **디스크 캐싱**: 재검색 시 텍스트 추출을 건너뛰어 속도 향상
+- **UI/UX**: PyQt5 탭 인터페이스 (테이블/텍스트 결과), 행 호버 강조
+- **검색 결과 강조 및 정렬**: 검색어 붉은색 표시, 업무 연관도 기반 정렬
 - **파일 실행**: 검색 중/완료 상관없이 더블클릭으로 즉시 실행
 
 ---
 
 ## 📝 최근 업데이트
+
+**v1.2.0 (2026-08-08)**
+- ✅ 지원 파일 형식 대폭 확대: CSV, JSON, XML, PowerPoint(.ppt/.pptx), ZIP 내부 검색 추가 (총 15개 확장자 + zip)
+- ✅ 텍스트 추출 결과 디스크 캐싱 도입 — 재검색 속도 대폭 개선
+- ✅ docx 파싱 실패(대용량 임베디드 첨부 등) 시 document.xml 직접 추출로 우회
+- ✅ 하위 폴더 검색 시 캐시가 무효화되던 경로 구분자 버그 수정
+- ✅ 업무 연관도 기반 검색 결과 정렬 추가
+- ✅ 테이블 행 호버 강조 효과 추가 (QLabel 강조 셀 포함)
+- ✅ 검색어/검색 경로 초기화 기능 추가
+- ✅ `FEATURES.md` 기능 정리 문서 추가
 
 **v1.1.0 (2026-08-02)**
 - ✅ 파일 더블클릭 실행 안정화
@@ -262,10 +283,12 @@ fsearch/
 
 ### Q: 특정 파일 형식이 검색되지 않습니다
 **A**: 지원 형식 확인:
-- 문서: .doc, .docx, .pdf, .txt, .md
+- 문서: .doc(파일명만), .docx, .ppt(파일명만), .pptx, .pdf, .txt, .md
 - 스프레드시트: .xls, .xlsx
 - 한글: .hwp, .hwpx
 - 웹: .html, .htm
+- 데이터: .csv, .json, .xml
+- 압축파일: .zip (내부 문서까지 검색)
 
 ### Q: 로그 파일은 어디에 있나요?
 **A**: `C:\Users\<username>\.fsearch\logs\` 폴더 확인
@@ -305,5 +328,5 @@ MIT License - 자유롭게 사용, 수정, 배포 가능
 
 **Happy Searching! 🚀**
 
-*최종 업데이트: 2026-08-02*  
-*버전: v1.1.0*
+*최종 업데이트: 2026-08-08*  
+*버전: v1.2.0*
