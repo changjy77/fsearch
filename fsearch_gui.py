@@ -449,6 +449,7 @@ class SearchWorker(QThread):
             t_phase_start = time.time()
             results = []
             processed = 0
+            checkpoint_logged = set()
 
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                 futures = {executor.submit(self._search_file, f, regex): f for f in files}
@@ -472,6 +473,13 @@ class SearchWorker(QThread):
 
                     processed += 1
                     self.progress.emit(int((processed / len(files)) * 100))
+
+                    # 진단용: 25/50/75/100% 지점에서 경과시간 기록
+                    pct = int((processed / len(files)) * 100)
+                    for cp in (25, 50, 75, 100):
+                        if pct >= cp and cp not in checkpoint_logged:
+                            checkpoint_logged.add(cp)
+                            self.timing[f'checkpoint_{cp}pct'] = time.time() - t_phase_start
             self.timing['search'] = time.time() - t_phase_start
 
             # 매칭된 파일들과 미매칭 파일들 분류
@@ -1717,6 +1725,13 @@ class FSearchGUI(QMainWindow):
                 f"검색:{t.get('search', 0):.3f}s "
                 f"분류:{t.get('classify', 0):.3f}s "
                 f"합계:{t.get('total', 0):.3f}s"
+            )
+            self.logger.info(
+                f"검색구간 진행률 체크포인트 - "
+                f"25%:{t.get('checkpoint_25pct', 0):.3f}s "
+                f"50%:{t.get('checkpoint_50pct', 0):.3f}s "
+                f"75%:{t.get('checkpoint_75pct', 0):.3f}s "
+                f"100%:{t.get('checkpoint_100pct', 0):.3f}s"
             )
 
     def _highlight_keyword(self, text: str, keyword: str, use_regex: bool) -> str:
