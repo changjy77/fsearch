@@ -689,11 +689,25 @@ class SearchWorker(QThread):
                 return self._read_text_smart(file_path)
 
             elif ext == '.docx' and Document:
-                # Word 문서
+                # Word 문서 - 본문 외에 표/머리글/바닥글/텍스트박스도 포함
                 try:
                     doc = Document(file_path)
-                    text = '\n'.join([para.text for para in doc.paragraphs])
-                    return text
+                    parts = [para.text for para in doc.paragraphs]
+
+                    for table in doc.tables:
+                        for row in table.rows:
+                            for cell in row.cells:
+                                parts.extend(p.text for p in cell.paragraphs)
+
+                    for section in doc.sections:
+                        parts.extend(p.text for p in section.header.paragraphs)
+                        parts.extend(p.text for p in section.footer.paragraphs)
+
+                    textbox_text = self._extract_docx_textboxes(file_path)
+                    if textbox_text:
+                        parts.append(textbox_text)
+
+                    return '\n'.join(parts)
                 except:
                     # 임베디드 첨부 등으로 python-docx 파싱 실패 시 document.xml 직접 추출로 우회
                     return self._extract_docx_raw_xml(file_path)
@@ -794,6 +808,17 @@ class SearchWorker(QThread):
                 xml = z.read('word/document.xml').decode('utf-8', errors='ignore')
             paragraphs = re.findall(r'<w:p(?:\s[^>]*)?>.*?</w:p>', xml, re.DOTALL)
             lines = [''.join(re.findall(r'<w:t[^>]*>([^<]*)</w:t>', p)) for p in paragraphs]
+            return '\n'.join(lines)
+        except:
+            return ""
+
+    def _extract_docx_textboxes(self, file_path: Path) -> str:
+        """텍스트박스(w:txbxContent) 안의 텍스트 추출 (python-docx가 지원하지 않아 raw XML로 보완)"""
+        try:
+            with zipfile.ZipFile(file_path) as z:
+                xml = z.read('word/document.xml').decode('utf-8', errors='ignore')
+            boxes = re.findall(r'<w:txbxContent[^>]*>.*?</w:txbxContent>', xml, re.DOTALL)
+            lines = [''.join(re.findall(r'<w:t[^>]*>([^<]*)</w:t>', box)) for box in boxes]
             return '\n'.join(lines)
         except:
             return ""
