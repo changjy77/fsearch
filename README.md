@@ -80,25 +80,42 @@
 - 바로 사용 가능
 - 어디서나 실행 가능
 
-### 💻 방법 2: 소스코드 실행 (개발자용)
+### 💻 방법 2: 소스코드 실행 (개발자용, Windows/macOS/Linux 공통)
 
-**설치:**
+**설치 (Windows):**
 ```bash
 # 1. 저장소 복제
 git clone https://github.com/changjy77/fsearch.git
 cd fsearch
 
 # 2. 필수 라이브러리 설치
-pip install PyQt5 python-docx PyPDF2 openpyxl python-pptx xlrd
+pip install -r requirements.txt
 
 # 3. 실행
 python fsearch_gui.py
+```
+
+**설치 (macOS):**
+```bash
+# 1. 저장소 복제
+git clone https://github.com/changjy77/fsearch.git
+cd fsearch
+
+# 2. 필수 라이브러리 설치 (Python 3.9+ 권장, python3/pip3 사용)
+pip3 install -r requirements.txt
+
+# 3. 실행
+python3 fsearch_gui.py
 ```
 
 **장점:**
 - 소스코드 수정 가능
 - 최신 버전 사용
 - 커스터마이징 가능
+
+> **참고**: `dist/fsearch.exe`는 Windows 전용 배포 파일입니다. macOS/Linux는 위처럼 소스코드로 직접 실행하며,
+> 파일 실행(더블클릭 상당 기능)은 `os.startfile`(Windows) / `open`(macOS) / `xdg-open`(Linux)으로 자동 분기됩니다.
+> macOS에서의 실제 동작은 제작 환경(Windows)에서 직접 검증하지 못했으니, 실행 중 문제가 있으면 알려주세요.
 
 ---
 
