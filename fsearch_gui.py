@@ -992,6 +992,7 @@ class FSearchGUI(QMainWindow):
         self.skipped_files_count_total = 0  # 스킵된 파일 갯수
         self._icon_provider = QFileIconProvider()  # 윈도우 탐색기 파일 아이콘 조회
         self._icon_html_cache = {}  # 확장자별 아이콘 <img> HTML 캐시
+        self._prewarm_icon_cache()  # 검색 중 첫 조회 지연(확장자당 최대 수백ms)을 시작 시점으로 이동
         self.blink_timer = QTimer()  # 버튼 깜박임 타이머
         self.blink_timer.timeout.connect(self.toggle_button_blink)  # 타이머 신호 연결
         self.blink_state = False  # 깜박임 상태
@@ -1766,6 +1767,11 @@ class FSearchGUI(QMainWindow):
             # 모든 일치 부분을 굵게 + 빨간색으로 표기
             pattern = re.compile(f'({re.escape(keyword)})', re.IGNORECASE)
             return pattern.sub(r'<span style="color: red; font-weight: bold;">\1</span>', text)
+
+    def _prewarm_icon_cache(self):
+        """지원 확장자의 아이콘을 미리 조회해 캐싱 (검색 중 첫 조회 지연 방지)"""
+        for ext in SearchWorker.EXTRACTABLE_EXTENSIONS | {'.zip'}:
+            self._get_icon_html(ext)
 
     def _get_icon_html(self, extension: str) -> str:
         """확장자에 대해 윈도우 탐색기와 동일한 아이콘을 <img> HTML로 반환 (캐시 사용)"""
