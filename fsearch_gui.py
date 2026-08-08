@@ -468,7 +468,7 @@ class SearchWorker(QThread):
                 for future in as_completed(futures):
                     # 중단 플래그 확인
                     if self.stop_flag:
-                        executor.shutdown(wait=False)
+                        executor.shutdown(wait=False, cancel_futures=True)
                         self.status.emit("⏹️ 검색 중단됨")
                         self.finished.emit(results)
                         return
