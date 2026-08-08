@@ -1723,20 +1723,16 @@ class FSearchGUI(QMainWindow):
 
     def update_no_match_files(self, no_match_files):
         """검색어 미포함 파일 누적 업데이트"""
-        # 중복 제거하면서 누적
-        for file_path in no_match_files:
-            if file_path not in self.no_match_files:
-                self.no_match_files.append(file_path)
+        # 검색 시작 시 초기화되고 검색당 한 번만 호출되며 입력 자체도 중복이 없어 중복 체크 불필요
+        self.no_match_files.extend(no_match_files)
 
         # 버튼 텍스트 업데이트
         self.no_match_files_btn.setText(f"❌ 검색어 미포함 파일 수 ({len(self.no_match_files)})")
 
     def update_skipped_files(self, skipped_files):
         """스킵된 대용량파일 목록 누적 업데이트"""
-        # 중복 제거하면서 누적
-        for file_path in skipped_files:
-            if file_path not in self.skipped_files:
-                self.skipped_files.append(file_path)
+        # 검색 시작 시 초기화되고 검색당 한 번만 호출되며 입력 자체도 중복이 없어 중복 체크 불필요
+        self.skipped_files.extend(skipped_files)
 
     def search_finished(self, results):
         """검색 완료 또는 중단"""
@@ -1855,10 +1851,8 @@ class FSearchGUI(QMainWindow):
 
         self.result_count.setText(f"결과: {len(results)}개 (파일: {len(file_counts)}개)")
 
-        # 읽은 파일 누적 (중복 제거)
-        for file_path in file_counts.keys():
-            if file_path not in self.read_files:
-                self.read_files.append(file_path)
+        # 읽은 파일 누적 (검색 시작 시 초기화되고 검색당 한 번만 호출되며 키는 이미 유일하므로 중복 체크 불필요)
+        self.read_files.extend(file_counts.keys())
 
         # 읽은 파일 버튼 업데이트
         self.read_files_btn.setText(f"🔍 찾은 파일 수 ({len(self.read_files)})")
