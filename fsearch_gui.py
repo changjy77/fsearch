@@ -23,13 +23,13 @@ from typing import List
 from collections import defaultdict
 
 from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLayout,
     QLabel, QLineEdit, QPushButton, QTextEdit, QFileDialog, QCheckBox,
     QSpinBox, QProgressBar, QComboBox, QTabWidget, QTableWidget, QTableWidgetItem,
     QSplitter, QMessageBox, QStyledItemDelegate, QFileIconProvider
 )
 from PyQt5.QtCore import (
-    Qt, QThread, pyqtSignal, QTimer, QRect, QObject, QEvent,
+    Qt, QThread, pyqtSignal, QTimer, QRect, QObject, QEvent, QSize, QPoint,
     QFileInfo, QByteArray, QBuffer, QIODevice
 )
 from PyQt5.QtGui import QIcon, QColor, QFont, QCursor, QPainter
@@ -208,6 +208,80 @@ class SearchHistory:
     def get_excluded_stats(self):
         """모든 제외 폴더 통계 반환"""
         return self.data.get('excluded_stats', {})
+
+
+class FlowLayout(QLayout):
+    """창 너비에 맞춰 자식 위젯을 자동으로 다음 줄로 줄바꿈하는 레이아웃"""
+    def __init__(self, parent=None, margin=0, spacing=6):
+        super().__init__(parent)
+        if parent is not None:
+            self.setContentsMargins(margin, margin, margin, margin)
+        self.setSpacing(spacing)
+        self._item_list = []
+
+    def addItem(self, item):
+        self._item_list.append(item)
+
+    def count(self):
+        return len(self._item_list)
+
+    def itemAt(self, index):
+        if 0 <= index < len(self._item_list):
+            return self._item_list[index]
+        return None
+
+    def takeAt(self, index):
+        if 0 <= index < len(self._item_list):
+            return self._item_list.pop(index)
+        return None
+
+    def expandingDirections(self):
+        return Qt.Orientations(Qt.Orientation(0))
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        return self._do_layout(QRect(0, 0, width, 0), True)
+
+    def setGeometry(self, rect):
+        super().setGeometry(rect)
+        self._do_layout(rect, False)
+
+    def sizeHint(self):
+        return self.minimumSize()
+
+    def minimumSize(self):
+        size = QSize()
+        for item in self._item_list:
+            size = size.expandedTo(item.minimumSize())
+        left, top, right, bottom = self.getContentsMargins()
+        size += QSize(left + right, top + bottom)
+        return size
+
+    def _do_layout(self, rect, test_only):
+        left, top, right, bottom = self.getContentsMargins()
+        effective_rect = rect.adjusted(left, top, -right, -bottom)
+        x = effective_rect.x()
+        y = effective_rect.y()
+        line_height = 0
+        spacing = self.spacing()
+
+        for item in self._item_list:
+            next_x = x + item.sizeHint().width() + spacing
+            if next_x - spacing > effective_rect.right() and line_height > 0:
+                x = effective_rect.x()
+                y = y + line_height + spacing
+                next_x = x + item.sizeHint().width() + spacing
+                line_height = 0
+
+            if not test_only:
+                item.setGeometry(QRect(QPoint(x, y), item.sizeHint()))
+
+            x = next_x
+            line_height = max(line_height, item.sizeHint().height())
+
+        return y + line_height - rect.y() + bottom
 
 
 class HoverableTableWidget(QTableWidget):
@@ -1129,9 +1203,10 @@ class FSearchGUI(QMainWindow):
         combined_container.setMaximumHeight(30)
         layout.addWidget(combined_container)
 
-        # ===== 추가 옵션 영역 (검색 설정) =====
+        # ===== 추가 옵션 영역 (검색 설정 + 파일 통계 버튼) =====
+        # 한 줄에 배치하되, 창이 좁아지면 FlowLayout이 자동으로 다음 줄로 줄바꿈함
         options2_container = QWidget()
-        options2_layout = QHBoxLayout(options2_container)
+        options2_layout = FlowLayout(options2_container)
         options2_layout.setContentsMargins(0, 0, 0, 0)
 
         self.name_only_cb = QCheckBox("파일명만")
@@ -1156,52 +1231,38 @@ class FSearchGUI(QMainWindow):
         self.workers_spin.setMaximumHeight(25)
         options2_layout.addWidget(self.workers_spin)
 
-        options2_layout.addStretch()
-        options2_container.setMaximumHeight(30)
-
-        layout.addWidget(options2_container)
-
-        # ===== 추가 옵션 영역 (파일 통계 버튼) =====
-        # 창을 좁게 줄일 수 있도록 검색 설정과 별도 줄로 분리(한 줄에 다 넣으면 최소 너비가 커져 가로 크기조절이 막힘)
-        options3_container = QWidget()
-        options3_layout = QHBoxLayout(options3_container)
-        options3_layout.setContentsMargins(0, 0, 0, 0)
-
         self.refresh_btn = QPushButton("🔄 새로고침")
         self.refresh_btn.clicked.connect(self.refresh_cache)
         self.refresh_btn.setMaximumHeight(25)
-        options3_layout.addWidget(self.refresh_btn)
+        options2_layout.addWidget(self.refresh_btn)
 
         self.excluded_btn = QPushButton("📁 제외된 파일")
         self.excluded_btn.clicked.connect(self.show_excluded_files)
         self.excluded_btn.setMaximumHeight(25)
-        options3_layout.addWidget(self.excluded_btn)
+        options2_layout.addWidget(self.excluded_btn)
 
         self.read_files_btn = QPushButton("🔍 찾은 파일 수 (0)")
         self.read_files_btn.clicked.connect(self.show_read_files)
         self.read_files_btn.setMaximumHeight(25)
-        options3_layout.addWidget(self.read_files_btn)
+        options2_layout.addWidget(self.read_files_btn)
 
         self.no_match_files_btn = QPushButton("❌ 검색어 미포함 파일 수 (0)")
         self.no_match_files_btn.clicked.connect(self.show_no_match_files)
         self.no_match_files_btn.setMaximumHeight(25)
-        options3_layout.addWidget(self.no_match_files_btn)
+        options2_layout.addWidget(self.no_match_files_btn)
 
         self.skipped_files_btn = QPushButton("⏭️ 스킵된 대용량파일 (0)")
         self.skipped_files_btn.clicked.connect(self.show_skipped_files)
         self.skipped_files_btn.setMaximumHeight(25)
         self.skipped_files_btn.setEnabled(False)
-        options3_layout.addWidget(self.skipped_files_btn)
+        options2_layout.addWidget(self.skipped_files_btn)
 
         self.performance_btn = QPushButton("⏱️ 완료시간 (0.00초)")
         self.performance_btn.setMaximumHeight(25)
         self.performance_btn.setEnabled(False)
-        options3_layout.addWidget(self.performance_btn)
+        options2_layout.addWidget(self.performance_btn)
 
-        options3_layout.addStretch()
-        options3_container.setMaximumHeight(30)
-
-        layout.addWidget(options3_container)
+        layout.addWidget(options2_container)
 
         # ===== 진행바 =====
         self.progress_bar = QProgressBar()
