@@ -15,6 +15,7 @@ import zipfile
 import sqlite3
 import threading
 import tempfile
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -58,6 +59,11 @@ try:
     import html2text
 except ImportError:
     html2text = None
+
+try:
+    import olefile
+except ImportError:
+    olefile = None
 
 
 def setup_logging():
@@ -663,29 +669,34 @@ class SearchWorker(QThread):
                 except:
                     return ""
 
-            elif ext in ['.hwp', '.hwpx']:
-                # 한글 파일 (.hwp, .hwpx)
+            elif ext == '.hwpx':
+                # 한글 파일 (.hwpx, zip 기반) - Contents/section*.xml에서 <hp:t> 텍스트 추출
                 try:
                     text = ""
                     with zipfile.ZipFile(file_path, 'r') as hwp:
-                        # HWP/HWPX 파일의 XML 콘텐츠 추출
-                        file_list = hwp.namelist()
-
-                        # Contents 폴더의 Section 파일들에서 텍스트 추출
-                        for name in file_list:
-                            if name.startswith('Contents/Section') and name.endswith('.xml'):
+                        for name in hwp.namelist():
+                            if 'section' in name.lower() and name.lower().endswith('.xml'):
                                 try:
-                                    xml_content = hwp.read(name).decode('utf-8', errors='ignore')
-                                    # 간단한 XML 파싱 - 텍스트 태그에서 내용 추출
-                                    import re
-                                    # <t> 태그 사이의 텍스트 추출
-                                    text_matches = re.findall(r'<t>([^<]+)</t>', xml_content)
-                                    for match in text_matches:
-                                        text += match + " "
-                                except:
+                                    root = ET.fromstring(hwp.read(name))
+                                    for elem in root.iter():
+                                        if (elem.tag == 't' or elem.tag.endswith('}t')) and elem.text:
+                                            text += elem.text + " "
+                                except ET.ParseError:
                                     pass
-
                     return text if text else ""
+                except:
+                    return ""
+
+            elif ext == '.hwp':
+                # 구버전 한글 파일 (OLE2 복합문서) - PrvText(미리보기 텍스트) 스트림에서 추출
+                if olefile is None:
+                    return ""
+                try:
+                    with olefile.OleFileIO(file_path) as ole:
+                        if not ole.exists('PrvText'):
+                            return ""
+                        data = ole.openstream('PrvText').read()
+                    return data.decode('utf-16le', errors='ignore')
                 except:
                     return ""
 

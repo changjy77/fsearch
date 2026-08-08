@@ -223,7 +223,8 @@ python3 fsearch_gui.py
   - python-pptx (PowerPoint 문서)
   - PyPDF2 (PDF)
   - openpyxl / xlrd (Excel .xlsx / .xls)
-  - zipfile (한글 .hwp/.hwpx, .zip 내부 검색)
+  - olefile (한글 .hwp, PrvText 스트림에서 추출)
+  - zipfile / xml.etree.ElementTree (한글 .hwpx, .zip 내부 검색)
 
 ### 프로젝트 구조
 ```
