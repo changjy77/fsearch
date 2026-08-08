@@ -666,6 +666,15 @@ class SearchWorker(QThread):
 
         return text
 
+    @staticmethod
+    def _read_text_smart(file_path: Path) -> str:
+        """UTF-8로 우선 시도하고, 실패하면 CP949(EUC-KR)로 재시도 (오래된 한글 문서 대응)"""
+        raw = file_path.read_bytes()
+        try:
+            return raw.decode('utf-8-sig')
+        except UnicodeDecodeError:
+            return raw.decode('cp949', errors='ignore')
+
     def _extract_text_impl(self, file_path: Path) -> str:
         """파일 형식별 텍스트 추출 (실제 파싱 로직)"""
         ext = file_path.suffix.lower()
@@ -673,13 +682,11 @@ class SearchWorker(QThread):
         try:
             if ext == '.txt' or ext == '.md' or ext == '.csv' or ext == '.json' or ext == '.xml':
                 # 텍스트/마크다운/CSV/JSON/XML 파일
-                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                    return f.read()
+                return self._read_text_smart(file_path)
 
             elif ext == '.html' or ext == '.htm':
                 # HTML 파일
-                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                    return f.read()
+                return self._read_text_smart(file_path)
 
             elif ext == '.docx' and Document:
                 # Word 문서
@@ -880,6 +887,16 @@ class SearchWorker(QThread):
 
         return results
 
+    @staticmethod
+    def _fix_zip_entry_name(info) -> str:
+        """UTF-8 플래그 없이 CP949로 저장된 zip 내부 파일명을 복원 (한글 zip 도구에서 흔한 인코딩 문제)"""
+        if info.flag_bits & 0x800:  # UTF-8 플래그가 설정된 경우 zipfile이 이미 올바르게 디코딩함
+            return info.filename
+        try:
+            return info.filename.encode('cp437').decode('cp949')
+        except (UnicodeDecodeError, UnicodeEncodeError):
+            return info.filename
+
     def _search_zip_file(self, file_path: Path, regex, zip_size, mod_time):
         """zip 압축파일 내부 문서를 풀어서 검색 (내부 파일마다 결과 하나씩)"""
         results = []
@@ -891,8 +908,10 @@ class SearchWorker(QThread):
                 for info in zf.infolist():
                     if info.is_dir():
                         continue
-                    inner_name = Path(info.filename).name
-                    ext = Path(info.filename).suffix.lower()
+                    # UTF-8 플래그 없이 CP949로 저장된 한글 zip 파일명 복원(한글 zip 도구에서 흔함)
+                    fixed_filename = self._fix_zip_entry_name(info)
+                    inner_name = Path(fixed_filename).name
+                    ext = Path(fixed_filename).suffix.lower()
                     if ext not in SearchWorker.EXTRACTABLE_EXTENSIONS:
                         continue
                     if self.skip_large_files and info.file_size > 10 * 1024 * 1024:
