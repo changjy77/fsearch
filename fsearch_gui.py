@@ -1515,7 +1515,14 @@ class FSearchGUI(QMainWindow):
         filename_label.setProperty("file_path", result['full_path'])  # ✅ 파일 경로 저장
         filename_label.setProperty("matched_lines", matched_lines)  # ✅ matched_lines 저장
         filename_label.setProperty("row", current_row_count)  # ✅ 행 번호 저장
+        filename_label.setAttribute(Qt.WA_TransparentForMouseEvents)  # 마우스 이벤트를 테이블로 통과시켜 호버/더블클릭이 정상 동작하도록 함
         self.table.setCellWidget(current_row_count, 0, filename_label)
+        # 위젯이 마우스 이벤트를 가로채지 않으므로, 툴팁/데이터는 동일 셀의 아이템에도 보관(다른 컬럼과 동일한 방식)
+        filename_item = QTableWidgetItem("")
+        filename_item.setToolTip(result['full_path'])
+        filename_item.setData(Qt.UserRole, result['full_path'])
+        filename_item.setData(Qt.UserRole + 1, matched_lines)
+        self.table.setItem(current_row_count, 0, filename_item)
 
         # 1: 경로 (검색어 강조 표시)
         path_text = result['folder_path']
@@ -2223,7 +2230,14 @@ class FSearchGUI(QMainWindow):
                 filename_label.setText(filename_html)
                 filename_label.setStyleSheet("padding: 3px;")
                 filename_label.setToolTip(result['full_path'])
+                filename_label.setAttribute(Qt.WA_TransparentForMouseEvents)  # 마우스 이벤트를 테이블로 통과시켜 호버/더블클릭이 정상 동작하도록 함
                 self.table.setCellWidget(current_row_count, 0, filename_label)
+                # 위젯이 마우스 이벤트를 가로채지 않으므로, 툴팁/데이터는 동일 셀의 아이템에도 보관(다른 컬럼과 동일한 방식)
+                filename_item = QTableWidgetItem("")
+                filename_item.setToolTip(result['full_path'])
+                filename_item.setData(Qt.UserRole, result['full_path'])
+                filename_item.setData(Qt.UserRole + 1, result.get('matched_lines', []))
+                self.table.setItem(current_row_count, 0, filename_item)
 
                 # 1: 경로 (검색어 강조 표시)
                 path_text = result['folder_path']
