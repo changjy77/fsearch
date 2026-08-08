@@ -830,15 +830,18 @@ class SearchWorker(QThread):
         filename_matched = False
         matched_lines = []  # 매칭된 라인 저장
 
+        # .doc(구버전 워드)는 내용 추출을 지원하지 않으므로 검색 옵션과 무관하게 항상 파일명만 매칭
+        content_unsupported = file_path.suffix.lower() == '.doc'
+
         # 파일명 검색
-        if not self.content_only:
+        if not self.content_only or content_unsupported:
             if self._match_keyword(file_path.name, regex):
                 total_match_count += 1
                 filename_matched = True
 
         # 파일 내용 검색 - 파일 형식별로 텍스트 추출
         content_match_count = 0
-        if not self.name_only:
+        if not self.name_only and not content_unsupported:
             # 파일에서 텍스트 추출
             text = self._extract_text(file_path)
             if text:
@@ -898,13 +901,16 @@ class SearchWorker(QThread):
                     match_count = 0
                     matched_lines = []
 
+                    # .doc(구버전 워드)는 내용 추출을 지원하지 않으므로 검색 옵션과 무관하게 항상 파일명만 매칭
+                    content_unsupported = ext == '.doc'
+
                     # 내부 파일명 검색
-                    if not self.content_only:
+                    if not self.content_only or content_unsupported:
                         if self._match_keyword(inner_name, regex):
                             match_count += 1
 
                     # 내부 파일 내용 검색
-                    if not self.name_only:
+                    if not self.name_only and not content_unsupported:
                         text = self._extract_zip_entry_text(file_path, zf, info, ext)
                         if text:
                             if regex:
