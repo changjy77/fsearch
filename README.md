@@ -216,12 +216,12 @@ python3 fsearch_gui.py
 ### 기술 스택
 - **언어**: Python 3.12
 - **GUI**: PyQt5 (5.15.9+)
-- **멀티스레드**: ThreadPoolExecutor (기본 16개)
-- **캐싱**: sqlite3 (텍스트 추출 결과 디스크 캐싱)
+- **병렬 처리**: ProcessPoolExecutor (텍스트 추출, GIL 우회) + ThreadPoolExecutor (검색, 기본 16개)
+- **캐싱**: sqlite3 (텍스트 추출 결과 디스크 캐싱 + FTS5 trigram 전문검색 인덱스)
 - **파일 처리**:
   - python-docx (Word 문서, 파싱 실패 시 zip 내부 XML 직접 추출로 우회)
   - python-pptx (PowerPoint 문서)
-  - PyPDF2 (PDF)
+  - PyMuPDF (PDF)
   - openpyxl / xlrd (Excel .xlsx / .xls)
   - olefile (한글 .hwp, PrvText 스트림에서 추출)
   - zipfile / xml.etree.ElementTree (한글 .hwpx, .zip 내부 검색)

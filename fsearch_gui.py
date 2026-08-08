@@ -15,10 +15,11 @@ import zipfile
 import sqlite3
 import threading
 import tempfile
+import multiprocessing
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 from typing import List
 from collections import defaultdict
 
@@ -41,9 +42,9 @@ except ImportError:
     Document = None
 
 try:
-    from PyPDF2 import PdfReader
+    import pymupdf as fitz
 except ImportError:
-    PdfReader = None
+    fitz = None
 
 try:
     from openpyxl import load_workbook, Workbook
@@ -394,8 +395,22 @@ class SearchResultDelegate(QStyledItemDelegate):
             painter.drawText(x, y, remaining_text)
 
 
+def _can_use_index(keyword: str) -> bool:
+    """이 키워드를 trigram 인덱스로 안전하고 빠르게 찾을 수 있는지 판단.
+
+    - 3글자 미만은 trigram 인덱스를 쓰지 못해 전체 스캔이 되고, 오히려 기존 방식보다 느리다.
+    - SQLite의 LIKE 대소문자 무시는 ASCII 전용이라 'café'로 'CAFÉ'를 찾지 못한다.
+      파이썬의 lower()와 결과가 달라지므로(누락 발생) 그런 키워드는 인덱스를 쓰지 않는다.
+      한글·한자처럼 대소문자가 없는 문자는 영향이 없어 빠른 경로를 그대로 탄다.
+    """
+    if len(keyword) < 3:
+        return False
+    return not any(ord(c) > 127 and c.lower() != c.upper() for c in keyword)
+
+
 class TextExtractionCache:
-    """파일에서 추출한 텍스트를 디스크(SQLite)에 캐싱 - 재검색 시 파싱 재사용"""
+    """파일에서 추출한 텍스트를 디스크(SQLite)에 캐싱 - 재검색 시 파싱 재사용
+    본문 검색은 trigram FTS5 인덱스로 처리해 전체 본문을 메모리로 올리지 않는다."""
 
     def __init__(self):
         cache_dir = Path.home() / ".fsearch"
@@ -406,29 +421,135 @@ class TextExtractionCache:
             "CREATE TABLE IF NOT EXISTS text_cache "
             "(path TEXT PRIMARY KEY, mtime REAL, size INTEGER, text TEXT)"
         )
+        conn.execute("CREATE TABLE IF NOT EXISTS cache_meta (key TEXT PRIMARY KEY, value TEXT)")
+        # trigram 토크나이저라야 '네이버'가 '네이버클라우드'에 매칭되는 부분 문자열 검색이 된다
+        # (기본 unicode61은 단어 단위라 기존 검색 동작과 결과가 달라짐)
+        conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS text_fts USING fts5("
+            "text, content='text_cache', content_rowid='rowid', tokenize='trigram')"
+        )
+        self._create_triggers(conn)
+        # 새 캐시(빈 DB)는 트리거만으로 인덱스가 항상 최신이므로 재구축이 필요 없다
+        if not conn.execute("SELECT EXISTS(SELECT 1 FROM text_cache)").fetchone()[0]:
+            conn.execute("INSERT OR REPLACE INTO cache_meta (key, value) VALUES ('fts_built', '1')")
         conn.commit()
         conn.close()
+
+    TRIGGER_NAMES = ('text_cache_ai', 'text_cache_ad', 'text_cache_au')
+
+    @classmethod
+    def _create_triggers(cls, conn):
+        """external content 방식은 자동 동기화되지 않으므로 트리거로 본문 변경을 인덱스에 반영"""
+        conn.execute(
+            "CREATE TRIGGER IF NOT EXISTS text_cache_ai AFTER INSERT ON text_cache BEGIN "
+            "INSERT INTO text_fts(rowid, text) VALUES (new.rowid, new.text); END"
+        )
+        conn.execute(
+            "CREATE TRIGGER IF NOT EXISTS text_cache_ad AFTER DELETE ON text_cache BEGIN "
+            "INSERT INTO text_fts(text_fts, rowid, text) VALUES('delete', old.rowid, old.text); END"
+        )
+        conn.execute(
+            "CREATE TRIGGER IF NOT EXISTS text_cache_au AFTER UPDATE ON text_cache BEGIN "
+            "INSERT INTO text_fts(text_fts, rowid, text) VALUES('delete', old.rowid, old.text); "
+            "INSERT INTO text_fts(rowid, text) VALUES (new.rowid, new.text); END"
+        )
+
+    def index_needs_build(self) -> bool:
+        """기존 캐시가 아직 색인되지 않았는지 확인 (업그레이드 후 최초 1회만 참)"""
+        conn = sqlite3.connect(str(self.db_path))
+        built = conn.execute("SELECT value FROM cache_meta WHERE key = 'fts_built'").fetchone()
+        has_rows = conn.execute("SELECT EXISTS(SELECT 1 FROM text_cache)").fetchone()[0]
+        conn.close()
+        return not built and bool(has_rows)
+
+    def build_index(self):
+        """기존 캐시 전체를 trigram 인덱스로 색인 (1회성, 데이터량에 비례해 수 분 소요)"""
+        conn = sqlite3.connect(str(self.db_path))
+        # 정리 단계의 UPDATE가 트리거를 통해 아직 비어 있는 인덱스에 delete를 시도하면
+        # 인덱스가 손상되므로("database disk image is malformed"), 트리거를 잠시 걷어내고
+        # 본문 정리를 끝낸 뒤 rebuild로 인덱스를 통째로 다시 만든다.
+        for name in self.TRIGGER_NAMES:
+            conn.execute(f"DROP TRIGGER IF EXISTS {name}")
+        self._sanitize_existing(conn)
+        conn.execute("INSERT INTO text_fts(text_fts) VALUES('rebuild')")
+        conn.execute("INSERT OR REPLACE INTO cache_meta (key, value) VALUES ('fts_built', '1')")
+        self._create_triggers(conn)
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def _sanitize_existing(conn):
+        """기존 캐시에 남아 있는 NUL 문자를 공백으로 치환.
+        SQL의 replace()는 NUL에서 잘려 쓸 수 없으므로 파이썬에서 바이트 단위로 처리한다."""
+        fixes = []
+        for rowid, blob in conn.execute(
+            "SELECT rowid, CAST(text AS BLOB) FROM text_cache WHERE text IS NOT NULL"
+        ):
+            if blob and b'\x00' in blob:
+                fixes.append((blob.replace(b'\x00', b' ').decode('utf-8', errors='ignore'), rowid))
+        if fixes:
+            conn.executemany("UPDATE text_cache SET text = ? WHERE rowid = ?", fixes)
+        return len(fixes)
 
     def load_for_prefix(self, path_prefix):
         """지정 경로 하위의 캐시만 로드하여 {경로: (mtime, size, text)} 반환"""
         conn = sqlite3.connect(str(self.db_path))
-        # 캐시 키는 str(Path(...))로 저장되어 구분자가 '\'이므로 조회 prefix도 동일하게 정규화
-        # (GUI가 'D:/클로드'처럼 '/'로 넘기면 매칭이 전부 실패해 캐시가 무효화됨)
-        like_pattern = str(Path(path_prefix)).rstrip("\\/") + "%"
         rows = conn.execute(
             "SELECT path, mtime, size, text FROM text_cache WHERE path LIKE ?",
-            (like_pattern,)
+            (self._prefix_pattern(path_prefix),)
         ).fetchall()
         conn.close()
         return {path: (mtime, size, text) for path, mtime, size, text in rows}
+
+    def load_meta_for_prefix(self, path_prefix):
+        """본문 없이 {경로: (mtime, size)}만 로드 - 캐시 유효성 판단과 정리에는 본문이 필요 없다"""
+        conn = sqlite3.connect(str(self.db_path))
+        rows = conn.execute(
+            "SELECT path, mtime, size FROM text_cache WHERE path LIKE ?",
+            (self._prefix_pattern(path_prefix),)
+        ).fetchall()
+        conn.close()
+        return {path: (mtime, size) for path, mtime, size in rows}
+
+    def load_matching_texts(self, path_prefix, keyword):
+        """캐시된 본문 중 키워드를 포함하는 항목만 {경로: 텍스트}로 반환 (trigram 인덱스 사용)
+
+        ESCAPE 절을 붙이면 trigram 인덱스 최적화가 비활성화된다(실측 13ms -> 1755ms).
+        그래서 평소에는 이스케이프 없이 조회한다. 키워드의 %와 _가 와일드카드로 동작하지만
+        결과는 항상 정답의 상위집합이므로 가져온 본문으로 파이썬에서 정확히 걸러낸다.
+        다만 키워드에 실제로 와일드카드가 들어 있으면 상위집합이 지나치게 커져 오히려 느려지므로
+        (실측 '50%' 4891ms) 그때는 이스케이프해서 조회한다.
+        """
+        conn = sqlite3.connect(str(self.db_path))
+        if '%' in keyword or '_' in keyword:
+            pattern = keyword.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+            sql = ("SELECT path, text FROM text_cache WHERE rowid IN "
+                   "(SELECT rowid FROM text_fts WHERE text LIKE ? ESCAPE '\\') AND path LIKE ?")
+        else:
+            pattern = keyword
+            sql = ("SELECT path, text FROM text_cache WHERE rowid IN "
+                   "(SELECT rowid FROM text_fts WHERE text LIKE ?) AND path LIKE ?")
+        rows = conn.execute(sql, (f"%{pattern}%", self._prefix_pattern(path_prefix))).fetchall()
+        conn.close()
+        keyword_lower = keyword.lower()
+        return {path: text for path, text in rows if text and keyword_lower in text.lower()}
+
+    @staticmethod
+    def _prefix_pattern(path_prefix):
+        """캐시 키는 str(Path(...))로 저장되어 구분자가 '\'이므로 조회 prefix도 동일하게 정규화
+        (GUI가 'D:/클로드'처럼 '/'로 넘기면 매칭이 전부 실패해 캐시가 무효화됨)"""
+        return str(Path(path_prefix)).rstrip("\\/") + "%"
 
     def save_entries(self, entries):
         """{경로: (mtime, size, text)} 항목들을 일괄 저장"""
         if not entries:
             return
         conn = sqlite3.connect(str(self.db_path))
+        # INSERT OR REPLACE의 암묵적 삭제는 재귀 트리거가 꺼져 있으면 DELETE 트리거를 발생시키지 않아
+        # 인덱스에 옛 본문이 남는다. 삭제와 삽입을 명시적으로 나눠 트리거가 확실히 동작하게 한다.
+        conn.executemany("DELETE FROM text_cache WHERE path = ?", [(path,) for path in entries])
         conn.executemany(
-            "INSERT OR REPLACE INTO text_cache (path, mtime, size, text) VALUES (?, ?, ?, ?)",
+            "INSERT INTO text_cache (path, mtime, size, text) VALUES (?, ?, ?, ?)",
             [(path, mtime, size, text) for path, (mtime, size, text) in entries.items()]
         )
         conn.commit()
@@ -442,6 +563,195 @@ class TextExtractionCache:
         conn.executemany("DELETE FROM text_cache WHERE path = ?", [(k,) for k in keys])
         conn.commit()
         conn.close()
+
+
+def _read_text_smart(file_path: Path) -> str:
+    """UTF-8로 우선 시도하고, 실패하면 CP949(EUC-KR)로 재시도 (오래된 한글 문서 대응)"""
+    raw = file_path.read_bytes()
+    try:
+        return raw.decode('utf-8-sig')
+    except UnicodeDecodeError:
+        return raw.decode('cp949', errors='ignore')
+
+
+def _extract_docx_raw_xml(file_path: Path) -> str:
+    """word/document.xml에서 텍스트 태그를 직접 추출 (python-docx 파싱 실패 시 우회용)"""
+    try:
+        with zipfile.ZipFile(file_path) as z:
+            xml = z.read('word/document.xml').decode('utf-8', errors='ignore')
+        paragraphs = re.findall(r'<w:p(?:\s[^>]*)?>.*?</w:p>', xml, re.DOTALL)
+        lines = [''.join(re.findall(r'<w:t[^>]*>([^<]*)</w:t>', p)) for p in paragraphs]
+        return '\n'.join(lines)
+    except:
+        return ""
+
+
+def _extract_docx_textboxes(file_path: Path) -> str:
+    """텍스트박스(w:txbxContent) 안의 텍스트 추출 (python-docx가 지원하지 않아 raw XML로 보완)"""
+    try:
+        with zipfile.ZipFile(file_path) as z:
+            xml = z.read('word/document.xml').decode('utf-8', errors='ignore')
+        boxes = re.findall(r'<w:txbxContent[^>]*>.*?</w:txbxContent>', xml, re.DOTALL)
+        lines = [''.join(re.findall(r'<w:t[^>]*>([^<]*)</w:t>', box)) for box in boxes]
+        return '\n'.join(lines)
+    except:
+        return ""
+
+
+def _strip_nul(text: str) -> str:
+    """NUL 문자를 공백으로 치환.
+    SQLite의 문자열 함수와 FTS5 인덱스는 NUL에서 문자열이 끝난 것으로 취급해
+    그 뒤 내용이 통째로 검색에서 누락된다. PDF 추출기가 공백 자리에 NUL을 넣는
+    경우가 많아(예: '접수:\\x002020.\\x009.') 삭제가 아니라 공백으로 바꾼다."""
+    return text.replace('\x00', ' ') if text else text
+
+
+def _extract_text_impl(file_path: Path) -> str:
+    """파일 형식별 텍스트 추출 (실제 파싱 로직)
+    모듈 레벨 함수 - SearchWorker(QThread)의 인스턴스 메서드는 pickle이 불가능해
+    ProcessPoolExecutor 워커로 전달할 수 없으므로 클래스 밖에 둔다."""
+    return _strip_nul(_extract_text_raw(file_path))
+
+
+def _extract_text_raw(file_path: Path) -> str:
+    """파일 형식별 텍스트 추출 (형식별 분기 본체)"""
+    ext = file_path.suffix.lower()
+
+    try:
+        if ext == '.txt' or ext == '.md' or ext == '.csv' or ext == '.json' or ext == '.xml':
+            # 텍스트/마크다운/CSV/JSON/XML 파일
+            return _read_text_smart(file_path)
+
+        elif ext == '.html' or ext == '.htm':
+            # HTML 파일
+            return _read_text_smart(file_path)
+
+        elif ext == '.docx' and Document:
+            # Word 문서 - 본문 외에 표/머리글/바닥글/텍스트박스도 포함
+            try:
+                doc = Document(file_path)
+                parts = [para.text for para in doc.paragraphs]
+
+                for table in doc.tables:
+                    for row in table.rows:
+                        for cell in row.cells:
+                            parts.extend(p.text for p in cell.paragraphs)
+
+                for section in doc.sections:
+                    parts.extend(p.text for p in section.header.paragraphs)
+                    parts.extend(p.text for p in section.footer.paragraphs)
+
+                textbox_text = _extract_docx_textboxes(file_path)
+                if textbox_text:
+                    parts.append(textbox_text)
+
+                return '\n'.join(parts)
+            except:
+                # 임베디드 첨부 등으로 python-docx 파싱 실패 시 document.xml 직접 추출로 우회
+                return _extract_docx_raw_xml(file_path)
+
+        elif ext == '.pptx' and Presentation:
+            # 파워포인트 문서
+            try:
+                prs = Presentation(file_path)
+                text = ""
+                for slide in prs.slides:
+                    for shape in slide.shapes:
+                        if shape.has_text_frame:
+                            text += shape.text_frame.text + "\n"
+                return text
+            except:
+                return ""
+
+        elif ext == '.pdf' and fitz:
+            # PDF 파일
+            try:
+                text = ""
+                with fitz.open(str(file_path)) as doc:
+                    for page in doc:
+                        text += page.get_text() + "\n"
+                return text
+            except:
+                return ""
+
+        elif ext in ['.xlsx', '.xls'] and load_workbook:
+            # Excel 파일
+            try:
+                if ext == '.xlsx':
+                    wb = load_workbook(file_path, data_only=True)
+                    text = ""
+                    for ws in wb.sheetnames:
+                        sheet = wb[ws]
+                        for row in sheet.iter_rows():
+                            for cell in row:
+                                if cell.value:
+                                    text += str(cell.value) + " "
+                            text += "\n"
+                    return text
+                else:
+                    # .xls 파일은 openpyxl로 지원하지 않음
+                    import xlrd
+                    wb = xlrd.open_workbook(file_path)
+                    text = ""
+                    for sheet in wb.sheets():
+                        for row in sheet.get_rows():
+                            for cell in row:
+                                text += str(cell.value) + " "
+                            text += "\n"
+                    return text
+            except:
+                return ""
+
+        elif ext == '.hwpx':
+            # 한글 파일 (.hwpx, zip 기반) - Contents/section*.xml에서 <hp:t> 텍스트 추출
+            try:
+                text = ""
+                with zipfile.ZipFile(file_path, 'r') as hwp:
+                    for name in hwp.namelist():
+                        if 'section' in name.lower() and name.lower().endswith('.xml'):
+                            try:
+                                root = ET.fromstring(hwp.read(name))
+                                for elem in root.iter():
+                                    if (elem.tag == 't' or elem.tag.endswith('}t')) and elem.text:
+                                        text += elem.text + " "
+                            except ET.ParseError:
+                                pass
+                return text if text else ""
+            except:
+                return ""
+
+        elif ext == '.hwp':
+            # 구버전 한글 파일 (OLE2 복합문서) - PrvText(미리보기 텍스트) 스트림에서 추출
+            if olefile is None:
+                return ""
+            try:
+                with olefile.OleFileIO(file_path) as ole:
+                    if not ole.exists('PrvText'):
+                        return ""
+                    data = ole.openstream('PrvText').read()
+                return data.decode('utf-16le', errors='ignore')
+            except:
+                return ""
+
+        else:
+            return ""
+
+    except Exception:
+        return ""
+
+
+def _extract_text_worker(file_path_str: str):
+    """ProcessPoolExecutor 워커 진입점: 파일 경로 -> (경로, mtime, size, 추출된 텍스트).
+    CPU 바운드 파싱(PDF/docx/pptx/xlsx/hwp)은 GIL 때문에 스레드로는 병렬성이 거의 나오지 않아
+    (실측: 16스레드로도 1.03배) 별도 프로세스로 실행한다."""
+    file_path = Path(file_path_str)
+    try:
+        stat = file_path.stat()
+        mtime, size = stat.st_mtime, stat.st_size
+    except OSError:
+        return (file_path_str, None, None, "")
+    text = _extract_text_impl(file_path)
+    return (file_path_str, mtime, size, text)
 
 
 class SearchWorker(QThread):
@@ -485,6 +795,7 @@ class SearchWorker(QThread):
         self.skipped_large_files = 0  # 스킵된 대용량 파일 갯수
         self.skipped_files_list = []  # 스킵된 대용량파일 목록
         self.stop_flag = False  # 검색 중단 플래그
+        self._last_file_signal = 0.0  # file_processing 시그널 발행 간격 조절용
 
     def run(self):
         """검색 실행"""
@@ -517,7 +828,24 @@ class SearchWorker(QThread):
             # 파일명만 검색할 때는 텍스트 추출 자체를 하지 않으므로 캐시 로드를 생략
             t_phase_start = time.time()
             if not self.name_only:
-                self.file_cache = self.text_cache.load_for_prefix(self.path)
+                if self.text_cache.index_needs_build():
+                    self.status.emit("🔧 최초 1회 검색 색인을 생성 중입니다. 수 분 걸릴 수 있습니다...")
+                    self.text_cache.build_index()
+
+                if self.use_regex or not _can_use_index(self.keyword):
+                    # 정규식은 인덱스로 평가할 수 없고, 짧거나 비ASCII 대소문자가 섞인 키워드는
+                    # 인덱스 결과가 파이썬 매칭과 달라질 수 있어 기존처럼 본문 전체를 로드한다
+                    self.file_cache = self.text_cache.load_for_prefix(self.path)
+                else:
+                    # 키워드를 포함하지 않는 캐시 항목은 본문을 로드하지 않는다.
+                    # 내용 매칭 결과가 0인 것이 정답이므로 빈 문자열로 대체해도 결과가 같고,
+                    # 매 검색마다 캐시 본문 전체(수백MB~수GB)를 메모리로 올리는 비용이 사라진다.
+                    meta = self.text_cache.load_meta_for_prefix(self.path)
+                    matched = self.text_cache.load_matching_texts(self.path, self.keyword)
+                    self.file_cache = {
+                        path: (mtime, size, matched.get(path, ""))
+                        for path, (mtime, size) in meta.items()
+                    }
             self.timing['cache_load'] = time.time() - t_phase_start
 
             # 실제로 더 이상 존재하지 않는 파일의 캐시 항목 정리
@@ -537,14 +865,74 @@ class SearchWorker(QThread):
                 self.text_cache.delete_entries(stale_keys)
             self.timing['cache_cleanup'] = time.time() - t_phase_start
 
+            # CPU 바운드 텍스트 추출을 프로세스로 미리 처리
+            # (GIL 하 스레드는 파싱을 사실상 직렬화함: 실측 결과 16스레드로도 1.03배에 그침)
+            # 캐시에 이미 있는 파일은 대상에서 제외하고, 추출 결과는 file_cache에 채워 넣어
+            # 이어지는 검색 단계(스레드)가 재파싱 없이 그대로 재사용하게 한다.
+            # zip 내부 파일과 .doc/.ppt(내용 추출 불가)는 대상에서 제외한다.
+            t_phase_start = time.time()
+            if not self.name_only:
+                extract_targets = []
+                for f in files:
+                    ext = f.suffix.lower()
+                    if ext == '.zip' or ext in ('.doc', '.ppt'):
+                        continue
+                    try:
+                        stat = f.stat()
+                    except OSError:
+                        continue
+                    if self.skip_large_files and stat.st_size > 10 * 1024 * 1024:
+                        continue
+                    cache_key = (stat.st_mtime, stat.st_size)
+                    cached = self.file_cache.get(str(f))
+                    if cached and (cached[0], cached[1]) == cache_key:
+                        continue
+                    extract_targets.append(f)
+
+                if extract_targets:
+                    self.status.emit(f"⚙️ {len(extract_targets)}개 파일 텍스트 추출 중...")
+                    with ProcessPoolExecutor(max_workers=self.max_workers) as pool:
+                        extract_futures = {pool.submit(_extract_text_worker, str(f)): f for f in extract_targets}
+                        for future in as_completed(extract_futures):
+                            if self.stop_flag:
+                                pool.shutdown(wait=False, cancel_futures=True)
+                                self.status.emit("⏹️ 검색 중단됨")
+                                self.finished.emit([])
+                                return
+                            try:
+                                path_str, mtime, size, text = future.result()
+                            except Exception:
+                                continue
+                            if mtime is None:
+                                continue
+                            entry = (mtime, size, text)
+                            self.file_cache[path_str] = entry
+                            self.new_cache_entries[path_str] = entry
+            self.timing['extract'] = time.time() - t_phase_start
+
             # 병렬 검색
             t_phase_start = time.time()
             results = []
             processed = 0
             checkpoint_logged = set()
 
+            last_pct = -1
+
+            # 파일마다 태스크를 만들면 future 7천여 개의 관리 비용만 0.15초가 든다.
+            # 스레드는 zip 열기 같은 I/O 병렬화에 여전히 필요하므로 풀은 유지하고 묶어서 제출한다.
+            chunk_size = max(1, min(64, len(files) // (self.max_workers * 4)))
+            chunks = [files[i:i + chunk_size] for i in range(0, len(files), chunk_size)]
+
+            def search_chunk(chunk):
+                chunk_results = []
+                for f in chunk:
+                    if self.stop_flag:
+                        break
+                    chunk_results.extend(self._search_file(f, regex))
+                return chunk_results
+
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                futures = {executor.submit(self._search_file, f, regex): f for f in files}
+                futures = {executor.submit(search_chunk, c): len(c) for c in chunks}
 
                 for future in as_completed(futures):
                     # 중단 플래그 확인
@@ -563,11 +951,15 @@ class SearchWorker(QThread):
                     except:
                         pass
 
-                    processed += 1
-                    self.progress.emit(int((processed / len(files)) * 100))
+                    processed += futures[future]
+                    pct = int((processed / len(files)) * 100)
+                    # 진행바는 정수 퍼센트 단위라 값이 바뀔 때만 보내면 표시 결과가 같다
+                    # (파일마다 보내면 7천여 회 크로스스레드 시그널이 발생한다)
+                    if pct != last_pct:
+                        last_pct = pct
+                        self.progress.emit(pct)
 
                     # 진단용: 25/50/75/100% 지점에서 경과시간 기록
-                    pct = int((processed / len(files)) * 100)
                     for cp in (25, 50, 75, 100):
                         if pct >= cp and cp not in checkpoint_logged:
                             checkpoint_logged.add(cp)
@@ -608,35 +1000,43 @@ class SearchWorker(QThread):
                 return files
 
             # 제외할 폴더 필터링 - 전체 경로로 비교
-            dirs_to_remove = []
-            for d in dirs:
-                dir_path = Path(root) / d
-                dir_path_resolved = dir_path.resolve()
+            # resolve()는 디렉터리마다 발생하는 syscall이라 비용이 크므로(3,294개 기준 0.76초)
+            # 제외 폴더가 실제로 설정된 경우에만 수행한다
+            if excluded_paths:
+                dirs_to_remove = []
+                for d in dirs:
+                    dir_path = Path(root) / d
+                    dir_path_resolved = dir_path.resolve()
 
-                # 제외 폴더 또는 그 하위 폴더인지 확인
-                for excluded_path in excluded_paths:
-                    try:
-                        # dir_path가 excluded_path의 하위인지 확인
-                        dir_path_resolved.relative_to(excluded_path)
-                        dirs_to_remove.append(d)
-                        break
-                    except ValueError:
-                        # 하위가 아니면 continue
-                        pass
+                    # 제외 폴더 또는 그 하위 폴더인지 확인
+                    for excluded_path in excluded_paths:
+                        try:
+                            # dir_path가 excluded_path의 하위인지 확인
+                            dir_path_resolved.relative_to(excluded_path)
+                            dirs_to_remove.append(d)
+                            break
+                        except ValueError:
+                            # 하위가 아니면 continue
+                            pass
 
-            # 제외할 폴더 제거
-            for d in dirs_to_remove:
-                if d in dirs:
-                    dirs.remove(d)
+                # 제외할 폴더 제거
+                for d in dirs_to_remove:
+                    if d in dirs:
+                        dirs.remove(d)
+
+            # 경로 정규화는 파일마다가 아니라 디렉터리마다 한 번만 수행한다
+            root_path = Path(root)
+            root_display = str(root_path)
 
             for filename in filenames:
-                file_path = Path(root) / filename
-                # 허용된 확장자만 수집
-                if file_path.suffix.lower() in allowed_extensions:
-                    files.append(file_path)
+                # 확장자 판정은 문자열로 처리하고 대상 파일만 Path 객체를 만든다
+                # (전체 6만여 개 파일에 Path를 만들면 0.39초가 더 든다)
+                ext = SearchWorker._entry_ext(filename)
+                if ext in allowed_extensions:
+                    files.append(root_path / filename)
                 else:
                     # 제외된 파일 추적
-                    self.excluded_files.append(str(file_path))
+                    self.excluded_files.append(os.path.join(root_display, filename))
 
         # 제외된 파일 목록 업데이트 신호
         self.excluded_files_updated.emit(self.excluded_files)
@@ -651,14 +1051,14 @@ class SearchWorker(QThread):
             stat = file_path.stat()
             cache_key = (stat.st_mtime, stat.st_size)
         except OSError:
-            return self._extract_text_impl(file_path)
+            return _extract_text_impl(file_path)
 
         # 캐시 확인 (파일이 변경되지 않았으면 재사용)
         cached = self.file_cache.get(file_path_str)
         if cached and (cached[0], cached[1]) == cache_key:
             return cached[2]
 
-        text = self._extract_text_impl(file_path)
+        text = _extract_text_impl(file_path)
 
         with self.cache_lock:
             entry = (cache_key[0], cache_key[1], text)
@@ -667,169 +1067,17 @@ class SearchWorker(QThread):
 
         return text
 
-    @staticmethod
-    def _read_text_smart(file_path: Path) -> str:
-        """UTF-8로 우선 시도하고, 실패하면 CP949(EUC-KR)로 재시도 (오래된 한글 문서 대응)"""
-        raw = file_path.read_bytes()
-        try:
-            return raw.decode('utf-8-sig')
-        except UnicodeDecodeError:
-            return raw.decode('cp949', errors='ignore')
-
-    def _extract_text_impl(self, file_path: Path) -> str:
-        """파일 형식별 텍스트 추출 (실제 파싱 로직)"""
-        ext = file_path.suffix.lower()
-
-        try:
-            if ext == '.txt' or ext == '.md' or ext == '.csv' or ext == '.json' or ext == '.xml':
-                # 텍스트/마크다운/CSV/JSON/XML 파일
-                return self._read_text_smart(file_path)
-
-            elif ext == '.html' or ext == '.htm':
-                # HTML 파일
-                return self._read_text_smart(file_path)
-
-            elif ext == '.docx' and Document:
-                # Word 문서 - 본문 외에 표/머리글/바닥글/텍스트박스도 포함
-                try:
-                    doc = Document(file_path)
-                    parts = [para.text for para in doc.paragraphs]
-
-                    for table in doc.tables:
-                        for row in table.rows:
-                            for cell in row.cells:
-                                parts.extend(p.text for p in cell.paragraphs)
-
-                    for section in doc.sections:
-                        parts.extend(p.text for p in section.header.paragraphs)
-                        parts.extend(p.text for p in section.footer.paragraphs)
-
-                    textbox_text = self._extract_docx_textboxes(file_path)
-                    if textbox_text:
-                        parts.append(textbox_text)
-
-                    return '\n'.join(parts)
-                except:
-                    # 임베디드 첨부 등으로 python-docx 파싱 실패 시 document.xml 직접 추출로 우회
-                    return self._extract_docx_raw_xml(file_path)
-
-            elif ext == '.pptx' and Presentation:
-                # 파워포인트 문서
-                try:
-                    prs = Presentation(file_path)
-                    text = ""
-                    for slide in prs.slides:
-                        for shape in slide.shapes:
-                            if shape.has_text_frame:
-                                text += shape.text_frame.text + "\n"
-                    return text
-                except:
-                    return ""
-
-            elif ext == '.pdf' and PdfReader:
-                # PDF 파일
-                try:
-                    reader = PdfReader(file_path)
-                    text = ""
-                    for page in reader.pages:
-                        text += page.extract_text() + "\n"
-                    return text
-                except:
-                    return ""
-
-            elif ext in ['.xlsx', '.xls'] and load_workbook:
-                # Excel 파일
-                try:
-                    if ext == '.xlsx':
-                        wb = load_workbook(file_path, data_only=True)
-                        text = ""
-                        for ws in wb.sheetnames:
-                            sheet = wb[ws]
-                            for row in sheet.iter_rows():
-                                for cell in row:
-                                    if cell.value:
-                                        text += str(cell.value) + " "
-                                text += "\n"
-                        return text
-                    else:
-                        # .xls 파일은 openpyxl로 지원하지 않음
-                        import xlrd
-                        wb = xlrd.open_workbook(file_path)
-                        text = ""
-                        for sheet in wb.sheets():
-                            for row in sheet.get_rows():
-                                for cell in row:
-                                    text += str(cell.value) + " "
-                                text += "\n"
-                        return text
-                except:
-                    return ""
-
-            elif ext == '.hwpx':
-                # 한글 파일 (.hwpx, zip 기반) - Contents/section*.xml에서 <hp:t> 텍스트 추출
-                try:
-                    text = ""
-                    with zipfile.ZipFile(file_path, 'r') as hwp:
-                        for name in hwp.namelist():
-                            if 'section' in name.lower() and name.lower().endswith('.xml'):
-                                try:
-                                    root = ET.fromstring(hwp.read(name))
-                                    for elem in root.iter():
-                                        if (elem.tag == 't' or elem.tag.endswith('}t')) and elem.text:
-                                            text += elem.text + " "
-                                except ET.ParseError:
-                                    pass
-                    return text if text else ""
-                except:
-                    return ""
-
-            elif ext == '.hwp':
-                # 구버전 한글 파일 (OLE2 복합문서) - PrvText(미리보기 텍스트) 스트림에서 추출
-                if olefile is None:
-                    return ""
-                try:
-                    with olefile.OleFileIO(file_path) as ole:
-                        if not ole.exists('PrvText'):
-                            return ""
-                        data = ole.openstream('PrvText').read()
-                    return data.decode('utf-16le', errors='ignore')
-                except:
-                    return ""
-
-            else:
-                return ""
-
-        except Exception as e:
-            return ""
-
-    def _extract_docx_raw_xml(self, file_path: Path) -> str:
-        """word/document.xml에서 텍스트 태그를 직접 추출 (python-docx 파싱 실패 시 우회용)"""
-        try:
-            with zipfile.ZipFile(file_path) as z:
-                xml = z.read('word/document.xml').decode('utf-8', errors='ignore')
-            paragraphs = re.findall(r'<w:p(?:\s[^>]*)?>.*?</w:p>', xml, re.DOTALL)
-            lines = [''.join(re.findall(r'<w:t[^>]*>([^<]*)</w:t>', p)) for p in paragraphs]
-            return '\n'.join(lines)
-        except:
-            return ""
-
-    def _extract_docx_textboxes(self, file_path: Path) -> str:
-        """텍스트박스(w:txbxContent) 안의 텍스트 추출 (python-docx가 지원하지 않아 raw XML로 보완)"""
-        try:
-            with zipfile.ZipFile(file_path) as z:
-                xml = z.read('word/document.xml').decode('utf-8', errors='ignore')
-            boxes = re.findall(r'<w:txbxContent[^>]*>.*?</w:txbxContent>', xml, re.DOTALL)
-            lines = [''.join(re.findall(r'<w:t[^>]*>([^<]*)</w:t>', box)) for box in boxes]
-            return '\n'.join(lines)
-        except:
-            return ""
-
     def _search_file(self, file_path: Path, regex):
         """단일 파일 검색"""
         results = []
 
         # 현재 처리 중인 파일 신호 전송
-        self.file_processing.emit(f"🔍 {file_path.name}")
+        # 파일마다 보내면 초당 수천 건이라 화면에서는 어차피 읽을 수 없고 시그널 비용만 커지므로
+        # 표시 간격을 최소 30ms로 둔다 (스레드 간 경합이 나도 발행이 몇 번 늘 뿐 문제되지 않음)
+        now = time.monotonic()
+        if now - self._last_file_signal >= 0.03:
+            self._last_file_signal = now
+            self.file_processing.emit(f"🔍 {file_path.name}")
 
         # 파일 정보 수집
         try:
@@ -923,6 +1171,21 @@ class SearchWorker(QThread):
         except (UnicodeDecodeError, UnicodeEncodeError):
             return info.filename
 
+    @staticmethod
+    def _entry_basename(entry_name: str) -> str:
+        """zip 엔트리 경로에서 파일명만 분리 (Path.name과 동일, Path 객체 생성 없이)"""
+        name = entry_name.rstrip('/\\')
+        sep = max(name.rfind('/'), name.rfind('\\'))
+        return name[sep + 1:] if sep >= 0 else name
+
+    @staticmethod
+    def _entry_ext(entry_name: str) -> str:
+        """zip 엔트리의 소문자 확장자 (Path.suffix와 동일한 규칙:
+        점으로 시작하는 파일명과 점으로 끝나는 파일명은 확장자가 없는 것으로 본다)"""
+        name = SearchWorker._entry_basename(entry_name)
+        dot = name.rfind('.')
+        return name[dot:].lower() if 0 < dot < len(name) - 1 else ''
+
     def _search_zip_file(self, file_path: Path, regex, zip_size, mod_time):
         """zip 압축파일 내부 문서를 풀어서 검색 (내부 파일마다 결과 하나씩)"""
         results = []
@@ -934,14 +1197,17 @@ class SearchWorker(QThread):
                 for info in zf.infolist():
                     if info.is_dir():
                         continue
-                    # UTF-8 플래그 없이 CP949로 저장된 한글 zip 파일명 복원(한글 zip 도구에서 흔함)
-                    fixed_filename = self._fix_zip_entry_name(info)
-                    inner_name = Path(fixed_filename).name
-                    ext = Path(fixed_filename).suffix.lower()
+                    # 확장자는 ASCII라 CP437->CP949 보정 전후가 같으므로, 비용이 큰 이름 보정과
+                    # Path 객체 생성보다 먼저 확장자로 걸러낸다
+                    # (엔트리 9만여 개 중 대상은 3만여 개, 이 순서만 바꿔도 0.35초가 준다)
+                    ext = self._entry_ext(info.filename)
                     if ext not in SearchWorker.EXTRACTABLE_EXTENSIONS:
                         continue
                     if self.skip_large_files and info.file_size > 10 * 1024 * 1024:
                         continue
+                    # UTF-8 플래그 없이 CP949로 저장된 한글 zip 파일명 복원(한글 zip 도구에서 흔함)
+                    fixed_filename = self._fix_zip_entry_name(info)
+                    inner_name = self._entry_basename(fixed_filename)
 
                     match_count = 0
                     matched_lines = []
@@ -1006,7 +1272,7 @@ class SearchWorker(QThread):
             with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
                 tmp.write(data)
                 tmp_path = tmp.name
-            text = self._extract_text_impl(Path(tmp_path))
+            text = _extract_text_impl(Path(tmp_path))
         except:
             text = ""
         finally:
@@ -2461,4 +2727,5 @@ def main():
 
 
 if __name__ == '__main__':
+    multiprocessing.freeze_support()
     main()
