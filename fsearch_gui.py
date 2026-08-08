@@ -327,7 +327,9 @@ class TextExtractionCache:
     def load_for_prefix(self, path_prefix):
         """지정 경로 하위의 캐시만 로드하여 {경로: (mtime, size, text)} 반환"""
         conn = sqlite3.connect(str(self.db_path))
-        like_pattern = path_prefix.rstrip("\\/") + "%"
+        # 캐시 키는 str(Path(...))로 저장되어 구분자가 '\'이므로 조회 prefix도 동일하게 정규화
+        # (GUI가 'D:/클로드'처럼 '/'로 넘기면 매칭이 전부 실패해 캐시가 무효화됨)
+        like_pattern = str(Path(path_prefix)).rstrip("\\/") + "%"
         rows = conn.execute(
             "SELECT path, mtime, size, text FROM text_cache WHERE path LIKE ?",
             (like_pattern,)
