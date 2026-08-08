@@ -8,6 +8,7 @@ import os
 import re
 import time
 import json
+import base64
 import subprocess
 import logging
 import zipfile
@@ -24,9 +25,12 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QTextEdit, QFileDialog, QCheckBox,
     QSpinBox, QProgressBar, QComboBox, QTabWidget, QTableWidget, QTableWidgetItem,
-    QSplitter, QMessageBox, QStyledItemDelegate
+    QSplitter, QMessageBox, QStyledItemDelegate, QFileIconProvider
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QRect, QObject, QEvent
+from PyQt5.QtCore import (
+    Qt, QThread, pyqtSignal, QTimer, QRect, QObject, QEvent,
+    QFileInfo, QByteArray, QBuffer, QIODevice
+)
 from PyQt5.QtGui import QIcon, QColor, QFont, QCursor, QPainter
 
 # 파일 형식별 텍스트 추출 라이브러리
@@ -841,7 +845,8 @@ class SearchWorker(QThread):
                             'modified': mod_time,
                             'match_count': match_count,
                             'matched_lines': matched_lines,
-                            'extension': ext
+                            'extension': ext,
+                            'inner_name': inner_name
                         })
         except:
             pass
@@ -985,6 +990,8 @@ class FSearchGUI(QMainWindow):
         self.search_start_time = None  # 검색 시작 시간
         self.search_elapsed_time = 0  # 검색 소요 시간 (초)
         self.skipped_files_count_total = 0  # 스킵된 파일 갯수
+        self._icon_provider = QFileIconProvider()  # 윈도우 탐색기 파일 아이콘 조회
+        self._icon_html_cache = {}  # 확장자별 아이콘 <img> HTML 캐시
         self.blink_timer = QTimer()  # 버튼 깜박임 타이머
         self.blink_timer.timeout.connect(self.toggle_button_blink)  # 타이머 신호 연결
         self.blink_state = False  # 깜박임 상태
@@ -1496,33 +1503,18 @@ class FSearchGUI(QMainWindow):
         # matched_lines를 미리 준비 (모든 셀에 저장)
         matched_lines = result.get('matched_lines', [])
 
-        # 0: 파일명 (검색어 강조 표시)
-        filename_text = result['filename']
-        if hasattr(self, 'current_keyword') and self.current_keyword:
-            highlighted_filename = self._highlight_keyword(filename_text, self.current_keyword, self.current_regex)
-            if '<span' in highlighted_filename:
-                filename_label = QLabel()
-                filename_label.setText(highlighted_filename)
-                filename_label.setStyleSheet("padding: 3px;")
-                filename_label.setToolTip(result['full_path'])
-                filename_label.setProperty("file_path", result['full_path'])  # ✅ 파일 경로 저장
-                filename_label.setProperty("matched_lines", matched_lines)  # ✅ matched_lines 저장
-                filename_label.setProperty("row", current_row_count)  # ✅ 행 번호 저장
-                self.table.setCellWidget(current_row_count, 0, filename_label)
-            else:
-                filename_item = QTableWidgetItem(filename_text)
-                filename_item.setToolTip(result['full_path'])
-                filename_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-                filename_item.setData(Qt.UserRole, result['full_path'])  # ✅ 파일 경로 저장
-                filename_item.setData(Qt.UserRole + 1, matched_lines)  # ✅ matched_lines 저장
-                self.table.setItem(current_row_count, 0, filename_item)
-        else:
-            filename_item = QTableWidgetItem(filename_text)
-            filename_item.setToolTip(result['full_path'])
-            filename_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-            filename_item.setData(Qt.UserRole, result['full_path'])  # ✅ 파일 경로 저장
-            filename_item.setData(Qt.UserRole + 1, matched_lines)  # ✅ matched_lines 저장
-            self.table.setItem(current_row_count, 0, filename_item)
+        # 0: 파일명 (윈도우 탐색기 아이콘 + 검색어 강조 표시)
+        keyword = getattr(self, 'current_keyword', '')
+        use_regex = getattr(self, 'current_regex', False)
+        filename_html = self._build_filename_display(result, keyword, use_regex)
+        filename_label = QLabel()
+        filename_label.setText(filename_html)
+        filename_label.setStyleSheet("padding: 3px;")
+        filename_label.setToolTip(result['full_path'])
+        filename_label.setProperty("file_path", result['full_path'])  # ✅ 파일 경로 저장
+        filename_label.setProperty("matched_lines", matched_lines)  # ✅ matched_lines 저장
+        filename_label.setProperty("row", current_row_count)  # ✅ 행 번호 저장
+        self.table.setCellWidget(current_row_count, 0, filename_label)
 
         # 1: 경로 (검색어 강조 표시)
         path_text = result['folder_path']
@@ -1774,6 +1766,36 @@ class FSearchGUI(QMainWindow):
             # 모든 일치 부분을 굵게 + 빨간색으로 표기
             pattern = re.compile(f'({re.escape(keyword)})', re.IGNORECASE)
             return pattern.sub(r'<span style="color: red; font-weight: bold;">\1</span>', text)
+
+    def _get_icon_html(self, extension: str) -> str:
+        """확장자에 대해 윈도우 탐색기와 동일한 아이콘을 <img> HTML로 반환 (캐시 사용)"""
+        if extension not in self._icon_html_cache:
+            icon = self._icon_provider.icon(QFileInfo(f"dummy{extension}"))
+            pixmap = icon.pixmap(16, 16)
+            buf = QByteArray()
+            qbuf = QBuffer(buf)
+            qbuf.open(QIODevice.WriteOnly)
+            pixmap.save(qbuf, "PNG")
+            b64 = base64.b64encode(buf.data()).decode('ascii')
+            self._icon_html_cache[extension] = (
+                f'<img src="data:image/png;base64,{b64}" width="16" height="16" '
+                'style="vertical-align: middle;">'
+            )
+        return self._icon_html_cache[extension]
+
+    def _build_filename_display(self, result, keyword: str, use_regex: bool) -> str:
+        """파일명 셀에 표시할 HTML(윈도우 탐색기 아이콘 + 검색어 강조 텍스트) 생성"""
+        full_path = result['full_path']
+        if 'inner_name' in result:
+            # zip 내부 파일: 압축파일 아이콘 → 내부파일 아이콘
+            text = f"{Path(full_path).name} → {result['inner_name']}"
+            icon_html = f"{self._get_icon_html('.zip')} {self._get_icon_html(result['extension'])}"
+        else:
+            text = Path(full_path).name
+            icon_html = self._get_icon_html(result['extension'])
+
+        display_text = self._highlight_keyword(text, keyword, use_regex) if keyword else text
+        return f"{icon_html} {display_text}"
 
     def search_error(self, error):
         """검색 오류"""
@@ -2187,26 +2209,15 @@ class FSearchGUI(QMainWindow):
                     size_str = f"{size / (1024 * 1024):.1f} MB"
 
                 # 각 컬럼에 데이터 입력
-                # 0: 파일명 (검색어 강조 표시)
-                filename_text = result['filename']
-                if hasattr(self, 'current_keyword') and self.current_keyword:
-                    highlighted_filename = self._highlight_keyword(filename_text, self.current_keyword, self.current_regex)
-                    if '<span' in highlighted_filename:
-                        filename_label = QLabel()
-                        filename_label.setText(highlighted_filename)
-                        filename_label.setStyleSheet("padding: 3px;")
-                        filename_label.setToolTip(result['full_path'])
-                        self.table.setCellWidget(current_row_count, 0, filename_label)
-                    else:
-                        filename_item = QTableWidgetItem(filename_text)
-                        filename_item.setToolTip(result['full_path'])
-                        filename_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-                        self.table.setItem(current_row_count, 0, filename_item)
-                else:
-                    filename_item = QTableWidgetItem(filename_text)
-                    filename_item.setToolTip(result['full_path'])
-                    filename_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-                    self.table.setItem(current_row_count, 0, filename_item)
+                # 0: 파일명 (윈도우 탐색기 아이콘 + 검색어 강조 표시)
+                keyword = getattr(self, 'current_keyword', '')
+                use_regex = getattr(self, 'current_regex', False)
+                filename_html = self._build_filename_display(result, keyword, use_regex)
+                filename_label = QLabel()
+                filename_label.setText(filename_html)
+                filename_label.setStyleSheet("padding: 3px;")
+                filename_label.setToolTip(result['full_path'])
+                self.table.setCellWidget(current_row_count, 0, filename_label)
 
                 # 1: 경로 (검색어 강조 표시)
                 path_text = result['folder_path']
