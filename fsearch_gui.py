@@ -830,8 +830,8 @@ class SearchWorker(QThread):
         filename_matched = False
         matched_lines = []  # 매칭된 라인 저장
 
-        # .doc(구버전 워드)는 내용 추출을 지원하지 않으므로 검색 옵션과 무관하게 항상 파일명만 매칭
-        content_unsupported = file_path.suffix.lower() == '.doc'
+        # .doc/.ppt(구버전 워드/파워포인트)는 내용 추출을 지원하지 않으므로 검색 옵션과 무관하게 항상 파일명만 매칭
+        content_unsupported = file_path.suffix.lower() in ('.doc', '.ppt')
 
         # 파일명 검색
         if not self.content_only or content_unsupported:
@@ -901,8 +901,8 @@ class SearchWorker(QThread):
                     match_count = 0
                     matched_lines = []
 
-                    # .doc(구버전 워드)는 내용 추출을 지원하지 않으므로 검색 옵션과 무관하게 항상 파일명만 매칭
-                    content_unsupported = ext == '.doc'
+                    # .doc/.ppt(구버전 워드/파워포인트)는 내용 추출을 지원하지 않으므로 검색 옵션과 무관하게 항상 파일명만 매칭
+                    content_unsupported = ext in ('.doc', '.ppt')
 
                     # 내부 파일명 검색
                     if not self.content_only or content_unsupported:
