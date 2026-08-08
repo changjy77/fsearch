@@ -424,13 +424,20 @@ class TextExtractionCache:
         conn.execute("CREATE TABLE IF NOT EXISTS cache_meta (key TEXT PRIMARY KEY, value TEXT)")
         # trigram 토크나이저라야 '네이버'가 '네이버클라우드'에 매칭되는 부분 문자열 검색이 된다
         # (기본 unicode61은 단어 단위라 기존 검색 동작과 결과가 달라짐)
-        conn.execute(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS text_fts USING fts5("
-            "text, content='text_cache', content_rowid='rowid', tokenize='trigram')"
-        )
-        self._create_triggers(conn)
+        # trigram은 SQLite 3.34+ 에서만 지원되므로, 낮은 버전에서는 인덱스 없이 동작하도록 한다.
+        # 인덱스가 없어도 캐시 본문 전체를 훑는 기존 경로로 검색되며 결과는 동일하다(속도만 느려짐).
+        try:
+            conn.execute(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS text_fts USING fts5("
+                "text, content='text_cache', content_rowid='rowid', tokenize='trigram')"
+            )
+            self._create_triggers(conn)
+            self.fts_available = True
+        except sqlite3.DatabaseError:
+            self.fts_available = False
+
         # 새 캐시(빈 DB)는 트리거만으로 인덱스가 항상 최신이므로 재구축이 필요 없다
-        if not conn.execute("SELECT EXISTS(SELECT 1 FROM text_cache)").fetchone()[0]:
+        if self.fts_available and not conn.execute("SELECT EXISTS(SELECT 1 FROM text_cache)").fetchone()[0]:
             conn.execute("INSERT OR REPLACE INTO cache_meta (key, value) VALUES ('fts_built', '1')")
         conn.commit()
         conn.close()
@@ -456,6 +463,8 @@ class TextExtractionCache:
 
     def index_needs_build(self) -> bool:
         """기존 캐시가 아직 색인되지 않았는지 확인 (업그레이드 후 최초 1회만 참)"""
+        if not self.fts_available:
+            return False
         conn = sqlite3.connect(str(self.db_path))
         built = conn.execute("SELECT value FROM cache_meta WHERE key = 'fts_built'").fetchone()
         has_rows = conn.execute("SELECT EXISTS(SELECT 1 FROM text_cache)").fetchone()[0]
@@ -832,9 +841,11 @@ class SearchWorker(QThread):
                     self.status.emit("🔧 최초 1회 검색 색인을 생성 중입니다. 수 분 걸릴 수 있습니다...")
                     self.text_cache.build_index()
 
-                if self.use_regex or not _can_use_index(self.keyword):
+                if (self.use_regex or not self.text_cache.fts_available
+                        or not _can_use_index(self.keyword)):
                     # 정규식은 인덱스로 평가할 수 없고, 짧거나 비ASCII 대소문자가 섞인 키워드는
                     # 인덱스 결과가 파이썬 매칭과 달라질 수 있어 기존처럼 본문 전체를 로드한다
+                    # (SQLite 버전이 낮아 인덱스를 만들지 못한 경우에도 이 경로를 탄다)
                     self.file_cache = self.text_cache.load_for_prefix(self.path)
                 else:
                     # 키워드를 포함하지 않는 캐시 항목은 본문을 로드하지 않는다.
