@@ -1585,8 +1585,10 @@ class FSearchGUI(QMainWindow):
         match_count_item.setData(Qt.UserRole + 1, matched_lines)  # ✅ matched_lines 저장
         self.table.setItem(current_row_count, 4, match_count_item)
 
-        # 컬럼 너비를 내용에 맞게 자동 조정
-        self.table.resizeColumnsToContents()
+        # 컬럼 너비를 내용에 맞게 자동 조정 (매 행마다 하면 결과가 많을 때 누적 비용이 커서 20행마다만 수행,
+        # 검색 완료 시 search_finished에서 한 번 더 전체 조정됨)
+        if current_row_count % 20 == 0:
+            self.table.resizeColumnsToContents()
 
     def update_status(self, status):
         """상태 메시지 업데이트"""
