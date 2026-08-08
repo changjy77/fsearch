@@ -1208,7 +1208,7 @@ class FSearchGUI(QMainWindow):
         ])
         # 동적 크기 조정 설정
         self.table.horizontalHeader().setStretchLastSection(False)
-        self.table.horizontalHeader().setSectionResizeMode(1, 1)  # 경로: 확장 가능
+        self.table.horizontalHeader().setSectionResizeMode(1, 0)  # 경로: 사용자가 드래그로 크기 조절 가능(Interactive)
         self.table.verticalHeader().setVisible(False)  # 행 번호 숨김
         self.table.setSelectionBehavior(0)  # 행 선택 모드
         self.table.setSortingEnabled(False)  # ✅ 정렬 기능 비활성화
