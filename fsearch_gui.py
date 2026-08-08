@@ -398,10 +398,13 @@ class SearchWorker(QThread):
 
     def run(self):
         """검색 실행"""
+        self.timing = {}
+        t_run_start = time.time()
         try:
             # 파일 수집
             self.status.emit("📂 파일을 수집 중입니다...")
             files = self._collect_files()
+            self.timing['collect'] = time.time() - t_run_start
 
             if not files:
                 self.status.emit("❌ 검색할 파일이 없습니다.")
@@ -421,10 +424,13 @@ class SearchWorker(QThread):
                 regex = None
 
             # 디스크 캐시 로드 (같은 폴더 재검색 시 텍스트 추출 재사용)
+            t_phase_start = time.time()
             self.file_cache = self.text_cache.load_for_prefix(self.path)
+            self.timing['cache_load'] = time.time() - t_phase_start
 
             # 실제로 더 이상 존재하지 않는 파일의 캐시 항목 정리
             # (zip경로!내부파일명 형태는 zip 파일 자체의 존재 여부로 판단)
+            t_phase_start = time.time()
             exists_checked = {}
             stale_keys = []
             for cache_key in self.file_cache:
@@ -437,8 +443,10 @@ class SearchWorker(QThread):
                 for key in stale_keys:
                     del self.file_cache[key]
                 self.text_cache.delete_entries(stale_keys)
+            self.timing['cache_cleanup'] = time.time() - t_phase_start
 
             # 병렬 검색
+            t_phase_start = time.time()
             results = []
             processed = 0
 
@@ -464,11 +472,15 @@ class SearchWorker(QThread):
 
                     processed += 1
                     self.progress.emit(int((processed / len(files)) * 100))
+            self.timing['search'] = time.time() - t_phase_start
 
             # 매칭된 파일들과 미매칭 파일들 분류
+            t_phase_start = time.time()
             matched_files = {result['full_path'] for result in results}
             no_match_files = [str(f) for f in files if str(f) not in matched_files]
+            self.timing['classify'] = time.time() - t_phase_start
 
+            self.timing['total'] = time.time() - t_run_start
             self.finished.emit(results)
             self.no_match_files_updated.emit(no_match_files)
             self.skipped_files_updated.emit(self.skipped_files_list)
@@ -1696,6 +1708,16 @@ class FSearchGUI(QMainWindow):
 
         # 로깅 - 검색 결과
         self.logger.info(f"검색 완료 - 총 {len(results)}개 결과 (파일: {len(file_counts)}개, 스킵: {self.skipped_files_count_total}개)")
+        if self.search_worker and hasattr(self.search_worker, 'timing'):
+            t = self.search_worker.timing
+            self.logger.info(
+                f"구간별 시간 - 수집:{t.get('collect', 0):.3f}s "
+                f"캐시로드:{t.get('cache_load', 0):.3f}s "
+                f"캐시정리:{t.get('cache_cleanup', 0):.3f}s "
+                f"검색:{t.get('search', 0):.3f}s "
+                f"분류:{t.get('classify', 0):.3f}s "
+                f"합계:{t.get('total', 0):.3f}s"
+            )
 
     def _highlight_keyword(self, text: str, keyword: str, use_regex: bool) -> str:
         """텍스트에서 검색어를 HTML 굵게 + 빨간색으로 표기"""
