@@ -873,6 +873,7 @@ class SearchWorker(QThread):
             t_phase_start = time.time()
             if not self.name_only:
                 extract_targets = []
+                extract_bytes = 0
                 for f in files:
                     ext = f.suffix.lower()
                     if ext == '.zip' or ext in ('.doc', '.ppt'):
@@ -888,8 +889,15 @@ class SearchWorker(QThread):
                     if cached and (cached[0], cached[1]) == cache_key:
                         continue
                     extract_targets.append(f)
+                    extract_bytes += stat.st_size
 
-                if extract_targets:
+                # 자식 프로세스가 PyQt5와 파서 라이브러리를 모두 import하므로 스폰 비용이 약 0.6초다.
+                # 대상이 적으면 이 비용이 파싱 시간보다 커서 손해이므로(실측: 4개 18MB 기준
+                # 스레드 0.53초 vs 프로세스풀 1.27초, 8개 31MB부터 프로세스풀이 유리) 그때는
+                # 사전 추출을 건너뛰고 이어지는 검색 단계의 스레드가 처리하게 둔다.
+                worth_pool = len(extract_targets) >= 8 or extract_bytes >= 32 * 1024 * 1024
+
+                if extract_targets and worth_pool:
                     self.status.emit(f"⚙️ {len(extract_targets)}개 파일 텍스트 추출 중...")
                     with ProcessPoolExecutor(max_workers=self.max_workers) as pool:
                         extract_futures = {pool.submit(_extract_text_worker, str(f)): f for f in extract_targets}
