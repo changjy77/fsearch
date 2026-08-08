@@ -1129,7 +1129,7 @@ class FSearchGUI(QMainWindow):
         combined_container.setMaximumHeight(30)
         layout.addWidget(combined_container)
 
-        # ===== 추가 옵션 영역 =====
+        # ===== 추가 옵션 영역 (검색 설정) =====
         options2_container = QWidget()
         options2_layout = QHBoxLayout(options2_container)
         options2_layout.setContentsMargins(0, 0, 0, 0)
@@ -1156,41 +1156,52 @@ class FSearchGUI(QMainWindow):
         self.workers_spin.setMaximumHeight(25)
         options2_layout.addWidget(self.workers_spin)
 
+        options2_layout.addStretch()
+        options2_container.setMaximumHeight(30)
+
+        layout.addWidget(options2_container)
+
+        # ===== 추가 옵션 영역 (파일 통계 버튼) =====
+        # 창을 좁게 줄일 수 있도록 검색 설정과 별도 줄로 분리(한 줄에 다 넣으면 최소 너비가 커져 가로 크기조절이 막힘)
+        options3_container = QWidget()
+        options3_layout = QHBoxLayout(options3_container)
+        options3_layout.setContentsMargins(0, 0, 0, 0)
+
         self.refresh_btn = QPushButton("🔄 새로고침")
         self.refresh_btn.clicked.connect(self.refresh_cache)
         self.refresh_btn.setMaximumHeight(25)
-        options2_layout.addWidget(self.refresh_btn)
+        options3_layout.addWidget(self.refresh_btn)
 
         self.excluded_btn = QPushButton("📁 제외된 파일")
         self.excluded_btn.clicked.connect(self.show_excluded_files)
         self.excluded_btn.setMaximumHeight(25)
-        options2_layout.addWidget(self.excluded_btn)
+        options3_layout.addWidget(self.excluded_btn)
 
         self.read_files_btn = QPushButton("🔍 찾은 파일 수 (0)")
         self.read_files_btn.clicked.connect(self.show_read_files)
         self.read_files_btn.setMaximumHeight(25)
-        options2_layout.addWidget(self.read_files_btn)
+        options3_layout.addWidget(self.read_files_btn)
 
         self.no_match_files_btn = QPushButton("❌ 검색어 미포함 파일 수 (0)")
         self.no_match_files_btn.clicked.connect(self.show_no_match_files)
         self.no_match_files_btn.setMaximumHeight(25)
-        options2_layout.addWidget(self.no_match_files_btn)
+        options3_layout.addWidget(self.no_match_files_btn)
 
         self.skipped_files_btn = QPushButton("⏭️ 스킵된 대용량파일 (0)")
         self.skipped_files_btn.clicked.connect(self.show_skipped_files)
         self.skipped_files_btn.setMaximumHeight(25)
         self.skipped_files_btn.setEnabled(False)
-        options2_layout.addWidget(self.skipped_files_btn)
+        options3_layout.addWidget(self.skipped_files_btn)
 
         self.performance_btn = QPushButton("⏱️ 완료시간 (0.00초)")
         self.performance_btn.setMaximumHeight(25)
         self.performance_btn.setEnabled(False)
-        options2_layout.addWidget(self.performance_btn)
+        options3_layout.addWidget(self.performance_btn)
 
-        options2_layout.addStretch()
-        options2_container.setMaximumHeight(30)
+        options3_layout.addStretch()
+        options3_container.setMaximumHeight(30)
 
-        layout.addWidget(options2_container)
+        layout.addWidget(options3_container)
 
         # ===== 진행바 =====
         self.progress_bar = QProgressBar()
