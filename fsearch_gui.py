@@ -545,6 +545,46 @@ class TextExtractionCache:
         conn.commit()
         conn.close()
 
+    def row_count(self) -> int:
+        """캐시에 들어 있는 항목 수 (색인 전략 판단용)"""
+        conn = sqlite3.connect(str(self.db_path))
+        n = conn.execute("SELECT COUNT(*) FROM text_cache").fetchone()[0]
+        conn.close()
+        return n
+
+    def should_defer_index(self, new_entries: int) -> bool:
+        """색인을 나중에 한 번에 만드는 편이 유리한지 판단.
+
+        행마다 트리거로 갱신하면 본문 1M자당 0.194초, 마지막에 rebuild로 한 번에
+        만들면 0.110초다(실측). 다만 rebuild는 새 항목만이 아니라 캐시 '전체'를
+        다시 색인하므로, 새로 넣는 양이 기존 캐시에 비해 작으면 오히려 손해다.
+        여유를 두어 새 항목이 기존 항목 수 이상일 때만 미룬다.
+        """
+        if not self.fts_available or new_entries < 1000:
+            return False
+        return new_entries >= self.row_count()
+
+    def begin_deferred_index(self):
+        """대량 추출 동안 색인 갱신을 멈춘다.
+        도중에 중단되면 fts_built 표시가 없는 상태로 남아, 다음 검색에서
+        build_index()가 인덱스와 트리거를 함께 복구한다."""
+        conn = sqlite3.connect(str(self.db_path))
+        conn.execute("DELETE FROM cache_meta WHERE key = 'fts_built'")
+        for name in self.TRIGGER_NAMES:
+            conn.execute(f"DROP TRIGGER IF EXISTS {name}")
+        conn.commit()
+        conn.close()
+
+    def end_deferred_index(self):
+        """미뤄둔 색인을 한 번에 만들고 트리거를 복구한다.
+        추출 시점에 이미 NUL을 제거하므로 build_index()와 달리 본문 정리는 하지 않는다."""
+        conn = sqlite3.connect(str(self.db_path))
+        conn.execute("INSERT INTO text_fts(text_fts) VALUES('rebuild')")
+        conn.execute("INSERT OR REPLACE INTO cache_meta (key, value) VALUES ('fts_built', '1')")
+        self._create_triggers(conn)
+        conn.commit()
+        conn.close()
+
     @staticmethod
     def _sanitize_existing(conn):
         """기존 캐시에 남아 있는 NUL 문자를 공백으로 치환.
@@ -938,7 +978,9 @@ class SearchWorker(QThread):
                         f"🔄 추출 방식이 바뀐 {self.text_cache.cleared_by_version}개 항목을 다시 읽습니다..."
                     )
                 if self.text_cache.index_needs_build():
-                    self.status.emit("🔧 최초 1회 검색 색인을 생성 중입니다. 수 분 걸릴 수 있습니다...")
+                    # 기존 캐시를 처음 색인하는 경우이거나, 대량 추출이 도중에 끊겨
+                    # 색인이 최신이 아닌 경우다. 어느 쪽이든 여기서 통째로 다시 만든다.
+                    self.status.emit("🔧 검색 색인을 만드는 중입니다. 수 분 걸릴 수 있습니다...")
                     self.text_cache.build_index()
 
                 if (self.use_regex or not self.text_cache.fts_available
@@ -1015,6 +1057,11 @@ class SearchWorker(QThread):
                 total_targets = len(extract_targets) + zip_entry_count
                 worth_pool = total_targets >= 8 or extract_bytes >= 32 * 1024 * 1024
 
+                # 추출량이 많으면 색인 갱신을 미뤘다가 마지막에 한 번에 만든다
+                defer_index = self.text_cache.should_defer_index(total_targets)
+                if defer_index:
+                    self.text_cache.begin_deferred_index()
+
                 if total_targets and worth_pool:
                     self.status.emit(f"⚙️ {total_targets}개 파일 텍스트 추출 중...")
                     with ProcessPoolExecutor(max_workers=self.max_workers) as pool:
@@ -1044,6 +1091,12 @@ class SearchWorker(QThread):
                                 self.new_cache_entries[path_str] = entry
                             if len(self.new_cache_entries) >= self.CACHE_FLUSH_SIZE:
                                 self._flush_cache()
+
+                if defer_index:
+                    # 남은 항목까지 저장한 뒤 색인을 한 번에 만든다
+                    self._flush_cache()
+                    self.status.emit("🔧 검색 색인을 만드는 중입니다...")
+                    self.text_cache.end_deferred_index()
             self.timing['extract'] = time.time() - t_phase_start
 
             # 병렬 검색
