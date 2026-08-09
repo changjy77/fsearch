@@ -395,6 +395,18 @@ class SearchResultDelegate(QStyledItemDelegate):
             painter.drawText(x, y, remaining_text)
 
 
+def _format_remaining(seconds: float) -> str:
+    """초 단위 잔여 시간을 "N분 M초" 형태로 변환 (상태표시바 남은 시간 표기용)"""
+    seconds = max(0, int(seconds))
+    minutes, sec = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}시간 {minutes}분"
+    if minutes:
+        return f"{minutes}분 {sec}초"
+    return f"{sec}초"
+
+
 def _can_use_index(keyword: str) -> bool:
     """이 키워드를 trigram 인덱스로 안전하고 빠르게 찾을 수 있는지 판단.
 
@@ -964,6 +976,7 @@ class SearchWorker(QThread):
     no_match_files_updated = pyqtSignal(list)  # 검색어 미포함 파일 목록
     skipped_files_count = pyqtSignal(int)  # 스킵된 파일 갯수
     skipped_files_updated = pyqtSignal(list)  # 스킵된 대용량파일 목록
+    extraction_urgent = pyqtSignal(bool)  # 캐시DB가 비어 있어 대량 추출+색인 생성 중임을 표시
 
     # 내용 추출 가능한 확장자 (zip 내부 검색 시에도 동일하게 사용)
     EXTRACTABLE_EXTENSIONS = {
@@ -1117,13 +1130,20 @@ class SearchWorker(QThread):
                 total_targets = len(extract_targets) + zip_entry_count
                 worth_pool = total_targets >= 8 or extract_bytes >= 32 * 1024 * 1024
 
-                # 추출량이 많으면 색인 갱신을 미뤘다가 마지막에 한 번에 만든다
+                # 추출량이 많으면 색인 갱신을 미뤘다가 마지막에 한 번에 만든다.
+                # 이 조건(새 항목이 1,000건 이상이고 기존 캐시 항목 수 이상)은 사실상
+                # "캐시DB가 비어 있는 상태에서 최초 1회 대량 검색"과 같은 상황이므로,
+                # 캐시DB가 완성될 때까지 남은 시간을 상태표시바에 붉은 깜박임으로 알린다.
                 defer_index = self.text_cache.should_defer_index(total_targets)
                 if defer_index:
                     self.text_cache.begin_deferred_index()
+                    self.extraction_urgent.emit(True)
 
                 if total_targets and worth_pool:
                     self.status.emit(f"⚙️ {total_targets}개 파일 텍스트 추출 중...")
+                    extract_start = time.monotonic()
+                    extracted_count = 0
+                    last_eta_emit = 0.0
                     with ProcessPoolExecutor(max_workers=self.max_workers) as pool:
                         extract_futures = {}
                         for f in extract_targets:
@@ -1134,6 +1154,8 @@ class SearchWorker(QThread):
                         for future in as_completed(extract_futures):
                             if self.stop_flag:
                                 pool.shutdown(wait=False, cancel_futures=True)
+                                if defer_index:
+                                    self.extraction_urgent.emit(False)
                                 self.status.emit("⏹️ 검색 중단됨")
                                 self.finished.emit([])
                                 return
@@ -1152,11 +1174,32 @@ class SearchWorker(QThread):
                             if len(self.new_cache_entries) >= self.CACHE_FLUSH_SIZE:
                                 self._flush_cache()
 
+                            if defer_index:
+                                extracted_count += len(entries)
+                                now = time.monotonic()
+                                if now - last_eta_emit >= 1.0:
+                                    last_eta_emit = now
+                                    # 처리 초반 소수 건은 프로세스풀 워커 생성 지연(약 0.6초)이
+                                    # 그대로 실려 순간 처리율이 왜곡된다. 최소 20건은 처리된
+                                    # 뒤부터 추정해 첫 표시부터 크게 틀리지 않게 한다.
+                                    elapsed = now - extract_start
+                                    if extracted_count >= 20:
+                                        remaining = (elapsed / extracted_count) * (total_targets - extracted_count)
+                                        eta_text = _format_remaining(remaining)
+                                    else:
+                                        eta_text = "계산 중..."
+                                    self.status.emit(
+                                        f"⏳ 캐시DB 생성 중: {extracted_count:,}/{total_targets:,}개 "
+                                        f"(남은 시간 약 {eta_text})"
+                                    )
+
                 if defer_index:
-                    # 남은 항목까지 저장한 뒤 색인을 한 번에 만든다
+                    # 남은 항목까지 저장한 뒤 색인을 한 번에 만든다.
+                    # 이 단계도 캐시DB가 아직 "완성"되지 않은 상태이므로 깜박임은 유지한다.
                     self._flush_cache()
                     self.status.emit("🔧 검색 색인을 만드는 중입니다...")
                     self.text_cache.end_deferred_index()
+                    self.extraction_urgent.emit(False)
             self.timing['extract'] = time.time() - t_phase_start
 
             # 병렬 검색
@@ -1235,6 +1278,9 @@ class SearchWorker(QThread):
             self.error.emit(f"오류 발생: {str(e)}")
         finally:
             self._flush_cache()
+            # 대량 추출 도중 예외가 나도 상태표시바 깜박임이 계속 남지 않게 한다
+            # (정상 종료 시 이미 꺼져 있으므로 다시 꺼도 무해하다)
+            self.extraction_urgent.emit(False)
 
     def _collect_files(self) -> List[Path]:
         """파일 수집 - 지정된 파일 형식만"""
@@ -1718,6 +1764,10 @@ class FSearchGUI(QMainWindow):
         self.blink_timer = QTimer()  # 버튼 깜박임 타이머
         self.blink_timer.timeout.connect(self.toggle_button_blink)  # 타이머 신호 연결
         self.blink_state = False  # 깜박임 상태
+
+        self.status_blink_timer = QTimer()  # 상태표시바 깜박임 타이머(캐시DB 생성 중 표시용)
+        self.status_blink_timer.timeout.connect(self.toggle_status_blink)
+        self.status_blink_state = False
         self.init_ui()
 
     def init_ui(self):
@@ -2048,6 +2098,7 @@ class FSearchGUI(QMainWindow):
             self.is_searching = False
             # 모든 타이머/동작 멈추기
             self.blink_timer.stop()
+            self.set_status_urgent(False)
             self.progress_bar.setVisible(False)
             # 검색 워커 중단 신호
             if self.search_worker:
@@ -2129,6 +2180,7 @@ class FSearchGUI(QMainWindow):
         self.search_worker.no_match_files_updated.connect(self.update_no_match_files)  # 검색어 미포함 파일
         self.search_worker.skipped_files_count.connect(self.update_skipped_files_count)  # 스킵된 파일 갯수
         self.search_worker.skipped_files_updated.connect(self.update_skipped_files)  # 스킵된 대용량파일 목록
+        self.search_worker.extraction_urgent.connect(self.set_status_urgent)  # 캐시DB 생성 중 깜박임
 
         # 로깅
         self.logger.info(f"검색 시작 - 경로: {path}, 검색어: {keyword}")
@@ -2197,6 +2249,24 @@ class FSearchGUI(QMainWindow):
                 "opacity: 0.5; "
                 "}"
             )
+
+    def set_status_urgent(self, urgent: bool):
+        """캐시DB가 비어 있어 최초 대량 추출+색인 생성 중임을 상태표시바 깜박임으로 표시/해제"""
+        if urgent:
+            if not self.status_blink_timer.isActive():
+                self.status_blink_state = False
+                self.status_blink_timer.start(500)  # 500ms 간격 (버튼 깜박임과 동일 주기)
+        else:
+            self.status_blink_timer.stop()
+            self.status_label.setStyleSheet("")
+
+    def toggle_status_blink(self):
+        """상태표시바 깜박임 토글 (붉은 굵은 글씨 <-> 기본)"""
+        self.status_blink_state = not self.status_blink_state
+        if self.status_blink_state:
+            self.status_label.setStyleSheet("color: #FF0000; font-weight: bold;")
+        else:
+            self.status_label.setStyleSheet("")
 
     def update_progress(self, value):
         """진행바 업데이트"""
@@ -2334,6 +2404,7 @@ class FSearchGUI(QMainWindow):
         # 검색 상태 복원
         self.is_searching = False
         self.blink_timer.stop()
+        self.set_status_urgent(False)
         self.search_btn.setText("🔍 검색")
         self.search_btn.setStyleSheet("QPushButton { }")  # 기본 스타일 복원
 
@@ -2527,6 +2598,7 @@ class FSearchGUI(QMainWindow):
         # 검색 상태 복원
         self.is_searching = False
         self.blink_timer.stop()
+        self.set_status_urgent(False)
         self.search_btn.setText("🔍 검색")
         self.search_btn.setStyleSheet("QPushButton { }")  # 기본 스타일 복원
         QMessageBox.critical(self, "오류", error)
