@@ -1961,6 +1961,7 @@ class FSearchGUI(QMainWindow):
         self.keyword_input.setEditable(True)
         self.keyword_input.lineEdit().setPlaceholderText("검색할 키워드 입력...")
         self.keyword_input.lineEdit().returnPressed.connect(self.search)
+        self.keyword_input.lineEdit().textChanged.connect(self.on_keyword_changed)
         self.keyword_input.setMaximumHeight(25)
 
         # 검색 이력 로드
@@ -2432,6 +2433,16 @@ class FSearchGUI(QMainWindow):
         else:
             self.status_label.setStyleSheet("")
 
+    def on_keyword_changed(self, text):
+        """결과 초과로 비활성화된 검색 버튼을, 검색어를 다시 입력하면 활성화한다.
+        init_ui()에서 검색 이력을 keyword_input에 addItems()로 채우는 시점에도
+        이 시그널이 발생하는데, 그때는 아직 search_btn이 만들어지기 전이라 가드한다."""
+        if not hasattr(self, 'search_btn'):
+            return
+        if not self.search_btn.isEnabled():
+            self.search_btn.setEnabled(True)
+            self.status_label.setStyleSheet("")
+
     def update_progress(self, value):
         """진행바 업데이트"""
         self.progress_bar.setValue(value)
@@ -2681,7 +2692,21 @@ class FSearchGUI(QMainWindow):
         self.skipped_files_btn.setEnabled(self.skipped_files_count_total > 0)
 
         # 상태 메시지 업데이트
-        self.status_label.setText(f"✅ 검색 완료: {len(results)}개 결과")
+        # MAX_RESULTS 초과로 중단된 경우, worker가 emit한 경고 상태 메시지가
+        # 이 "완료" 메시지로 즉시 덮어써져 사용자가 볼 새도 없이 사라지므로
+        # (finished 신호 직전에 emit되지만 GUI 스레드에서 연속 처리됨) 유지한다.
+        if self.search_worker and getattr(self.search_worker, '_max_results_hit', False):
+            self.status_label.setStyleSheet("color: #FF0000; font-weight: bold;")
+            self.status_label.setText(
+                f"⚠️ 결과가 {self.search_worker.MAX_RESULTS}건을 초과해 검색을 중단했습니다 "
+                f"({len(results)}개 표시). 검색어를 더 구체적으로 입력해주세요."
+            )
+            # 검색어를 바꾸기 전까지는 같은 상황이 반복될 뿐이므로 검색 버튼을 막는다
+            # (on_keyword_changed가 검색어 입력칸 텍스트 변경 시 다시 활성화한다)
+            self.search_btn.setEnabled(False)
+        else:
+            self.status_label.setStyleSheet("")
+            self.status_label.setText(f"✅ 검색 완료: {len(results)}개 결과")
 
         # 로깅 - 검색 결과
         self.logger.info(f"검색 완료 - 총 {len(results)}개 결과 (파일: {len(file_counts)}개, 스킵: {self.skipped_files_count_total}개)")
