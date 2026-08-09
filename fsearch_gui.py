@@ -408,6 +408,24 @@ def _can_use_index(keyword: str) -> bool:
     return not any(ord(c) > 127 and c.lower() != c.upper() for c in keyword)
 
 
+# 파일 형식별 추출 로직 버전.
+#
+# 캐시는 (mtime, size)로만 유효성을 판단하므로, 추출 코드를 고쳐도 파일 자체가
+# 그대로면 옛 추출 결과를 계속 쓴다. 실제로 .hwp 본문 추출과 CP949 텍스트,
+# .docx 표/텍스트박스를 고친 뒤에도 이미 캐시돼 있던 파일 147개가 검색에서
+# 계속 누락되고 있었고, 캐시를 통째로 비우고 나서야 드러났다.
+#
+# **해당 형식의 추출 코드를 고치면 여기 번호를 올린다.** 번호가 바뀐 형식만
+# 캐시에서 지워져 다음 검색 때 다시 추출된다(나머지 형식은 그대로 재사용).
+EXTRACT_VERSIONS = {
+    '.txt': 1, '.md': 1, '.csv': 1, '.json': 1, '.xml': 1,
+    '.html': 1, '.htm': 1,
+    '.docx': 1, '.pptx': 1, '.pdf': 1,
+    '.xlsx': 1, '.xls': 1,
+    '.hwp': 1, '.hwpx': 1,
+}
+
+
 class TextExtractionCache:
     """파일에서 추출한 텍스트를 디스크(SQLite)에 캐싱 - 재검색 시 파싱 재사용
     본문 검색은 trigram FTS5 인덱스로 처리해 전체 본문을 메모리로 올리지 않는다."""
@@ -439,8 +457,49 @@ class TextExtractionCache:
         # 새 캐시(빈 DB)는 트리거만으로 인덱스가 항상 최신이므로 재구축이 필요 없다
         if self.fts_available and not conn.execute("SELECT EXISTS(SELECT 1 FROM text_cache)").fetchone()[0]:
             conn.execute("INSERT OR REPLACE INTO cache_meta (key, value) VALUES ('fts_built', '1')")
+
+        # 추출 로직이 바뀐 형식의 캐시 정리 (트리거가 있어야 FTS 인덱스도 함께 정리된다)
+        self.cleared_by_version = self._apply_extract_versions(conn)
         conn.commit()
         conn.close()
+
+    @staticmethod
+    def _apply_extract_versions(conn):
+        """EXTRACT_VERSIONS와 캐시에 기록된 버전을 비교해, 바뀐 형식의 캐시만 지운다.
+        지워진 항목은 다음 검색에서 새 추출 로직으로 다시 채워진다."""
+        stored = dict(conn.execute(
+            "SELECT key, value FROM cache_meta WHERE key LIKE 'extver:%'"
+        ).fetchall())
+
+        has_rows = conn.execute("SELECT EXISTS(SELECT 1 FROM text_cache)").fetchone()[0]
+        if not stored and has_rows:
+            # 버전 기록이 없는 기존 캐시는 현재 로직으로 만들어진 것으로 보고 표시만 남긴다.
+            # 여기서 전부 지우면 수 GB 캐시를 통째로 다시 만들게 되어 손해가 더 크다.
+            conn.executemany(
+                "INSERT OR REPLACE INTO cache_meta (key, value) VALUES (?, ?)",
+                [(f'extver:{ext}', str(ver)) for ext, ver in EXTRACT_VERSIONS.items()]
+            )
+            return 0
+
+        cleared = 0
+        for ext, ver in EXTRACT_VERSIONS.items():
+            key = f'extver:{ext}'
+            if stored.get(key) == str(ver):
+                continue
+            # zip 내부 항목은 'zip경로!내부파일명' 형태라 확장자로 끝나는 것은 동일하다
+            cur = conn.execute("DELETE FROM text_cache WHERE LOWER(path) LIKE ?", (f'%{ext}',))
+            cleared += cur.rowcount
+            conn.execute(
+                "INSERT OR REPLACE INTO cache_meta (key, value) VALUES (?, ?)", (key, str(ver))
+            )
+
+        if cleared:
+            # zip 스캔 표시를 지워 내부 항목을 다시 열거하게 한다.
+            # (표시가 남아 있으면 방금 지운 내부 항목을 다시 추출하지 않는다)
+            conn.execute(
+                "DELETE FROM text_cache WHERE LOWER(path) LIKE '%.zip' AND path NOT LIKE '%!%'"
+            )
+        return cleared
 
     TRIGGER_NAMES = ('text_cache_ai', 'text_cache_ad', 'text_cache_au')
 
@@ -873,6 +932,11 @@ class SearchWorker(QThread):
             # 파일명만 검색할 때는 텍스트 추출 자체를 하지 않으므로 캐시 로드를 생략
             t_phase_start = time.time()
             if not self.name_only:
+                if self.text_cache.cleared_by_version:
+                    # 이 검색이 평소보다 느린 이유를 알 수 있게 알린다
+                    self.status.emit(
+                        f"🔄 추출 방식이 바뀐 {self.text_cache.cleared_by_version}개 항목을 다시 읽습니다..."
+                    )
                 if self.text_cache.index_needs_build():
                     self.status.emit("🔧 최초 1회 검색 색인을 생성 중입니다. 수 분 걸릴 수 있습니다...")
                     self.text_cache.build_index()
