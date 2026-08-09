@@ -2229,7 +2229,8 @@ class FSearchGUI(QMainWindow):
                 # 통계 표시 업데이트
                 self.update_excluded_stats_display()
 
-                self.status_label.setText(f"✅ 제외 폴더 추가됨: {folder_name}")
+                if not getattr(self, '_max_results_warning_active', False):
+                    self.status_label.setText(f"✅ 제외 폴더 추가됨: {folder_name}")
             else:
                 QMessageBox.information(self, "알림", "이미 추가된 폴더입니다.")
 
