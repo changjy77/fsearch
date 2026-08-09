@@ -191,6 +191,11 @@ class SearchHistory:
         self.data['paths'] = []
         self._save_data()
 
+    def clear_excluded_stats(self):
+        """자주 제외하는 폴더 통계 삭제"""
+        self.data['excluded_stats'] = {}
+        self._save_data()
+
     def get_keywords(self):
         """모든 검색 키워드 반환"""
         return self.data.get('keywords', [])
@@ -1886,7 +1891,7 @@ class FSearchGUI(QMainWindow):
     def init_ui(self):
         """UI 초기화"""
         self.setWindowTitle("🔍 fsearch - 파일 검색 도구")
-        self.setGeometry(100, 100, 1200, 800)
+        self.setGeometry(100, 100, 1200, 600)
 
         # 중앙 위젯
         central = QWidget()
@@ -2341,14 +2346,16 @@ class FSearchGUI(QMainWindow):
         reply = QMessageBox.question(
             self,
             "경로 초기화",
-            "저장된 모든 검색 경로를 삭제하시겠습니까?",
+            "저장된 모든 검색 경로와 자주 제외하는 폴더 기록을 삭제하시겠습니까?",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No
         )
         if reply == QMessageBox.Yes:
             self.search_history.clear_paths()
+            self.search_history.clear_excluded_stats()
             self.path_input.clear()
-            QMessageBox.information(self, "완료", "경로가 모두 삭제되었습니다.")
+            self.update_excluded_stats_display()
+            QMessageBox.information(self, "완료", "경로와 자주 제외하는 폴더 기록이 모두 삭제되었습니다.")
 
     def toggle_button_blink(self):
         """버튼 깜박임 토글"""
