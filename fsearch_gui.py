@@ -1049,6 +1049,9 @@ class SearchWorker(QThread):
         self.skipped_files_list = []  # 스킵된 대용량파일 목록
         self.stop_flag = False  # 검색 중단 플래그
         self._last_file_signal = 0.0  # file_processing 시그널 발행 간격 조절용
+        self._found_lock = threading.Lock()  # _found_count 동시 접근 보호
+        self._found_count = 0  # 지금까지 찾은 결과 수(스레드 실시간 집계, MAX_RESULTS 판단용)
+        self._max_results_hit = False  # stop_flag가 사용자 중지가 아니라 MAX_RESULTS 초과로 세워졌는지
 
     def run(self):
         """검색 실행"""
@@ -1303,15 +1306,9 @@ class SearchWorker(QThread):
 
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                 futures = {executor.submit(search_chunk, c): len(c) for c in chunks}
+                stop_requested = False
 
                 for future in as_completed(futures):
-                    # 중단 플래그 확인
-                    if self.stop_flag:
-                        executor.shutdown(wait=False, cancel_futures=True)
-                        self.status.emit("⏹️ 검색 중단됨")
-                        self.finished.emit(results)
-                        return
-
                     try:
                         file_results = future.result()
                         results.extend(file_results)
@@ -1321,14 +1318,18 @@ class SearchWorker(QThread):
                     except:
                         pass
 
-                    if len(results) >= self.MAX_RESULTS:
+                    # 중단 플래그 확인 (사용자가 중지 버튼을 눌렀거나, _report_found()가
+                    # 결과 MAX_RESULTS 초과를 감지해 자동으로 세운 경우 둘 다 여기서 걸린다).
+                    # 여기서 바로 return하지 않는 이유: 다른 스레드가 방금 stop_flag를
+                    # 세운 시점에 그 스레드 자신의 future(예: zip 내부를 순회하다 막
+                    # 멈춘 작업)는 아직 as_completed에 나타나지 않았을 수 있다. 즉시
+                    # 종료하면 그 future의 결과가 통째로 유실된다(실측으로 확인한 버그).
+                    # cancel_futures=True로 아직 시작 안 한 작업만 취소하고, 이미 실행
+                    # 중이던 작업들은 stop_flag 덕분에 금방 끝나므로 루프를 끝까지 돌려
+                    # 그 결과까지 마저 수거한 뒤 종료한다.
+                    if self.stop_flag and not stop_requested:
+                        stop_requested = True
                         executor.shutdown(wait=False, cancel_futures=True)
-                        self.status.emit(
-                            f"⚠️ 결과가 {self.MAX_RESULTS}건을 초과해 검색을 중단했습니다. "
-                            "검색어를 더 구체적으로 입력해주세요."
-                        )
-                        self.finished.emit(results)
-                        return
 
                     # zip 내부 파일 추출 결과가 쌓이므로 여기서도 주기적으로 저장한다
                     if len(self.new_cache_entries) >= self.CACHE_FLUSH_SIZE:
@@ -1347,6 +1348,17 @@ class SearchWorker(QThread):
                         if pct >= cp and cp not in checkpoint_logged:
                             checkpoint_logged.add(cp)
                             self.timing[f'checkpoint_{cp}pct'] = time.time() - t_phase_start
+
+                if stop_requested:
+                    if self._max_results_hit:
+                        self.status.emit(
+                            f"⚠️ 결과가 {self.MAX_RESULTS}건을 초과해 검색을 중단했습니다. "
+                            "검색어를 더 구체적으로 입력해주세요."
+                        )
+                    else:
+                        self.status.emit("⏹️ 검색 중단됨")
+                    self.finished.emit(results)
+                    return
             self.timing['search'] = time.time() - t_phase_start
 
             # 매칭된 파일들과 미매칭 파일들 분류
@@ -1558,6 +1570,18 @@ class SearchWorker(QThread):
 
         return text
 
+    def _report_found(self, n=1):
+        """결과 n건이 방금 발견됐음을 전역 카운터에 반영하고, MAX_RESULTS를 넘으면
+        stop_flag를 세운다. zip 하나에 매치가 수천 건 몰려 있으면 그 zip을 다 처리할
+        때까지는 메인 루프의 len(results) 체크가 전혀 반영되지 않으므로(zip 처리가
+        끝나야 결과가 한꺼번에 합쳐짐), 매칭이 발견되는 즉시(엔트리 단위로) 여기서
+        전역으로 집계해야 zip 내부 순회 중에도 바로 멈출 수 있다."""
+        with self._found_lock:
+            self._found_count += n
+            if self._found_count >= self.MAX_RESULTS:
+                self._max_results_hit = True
+                self.stop_flag = True
+
     def _search_file(self, file_path: Path, regex):
         """단일 파일 검색"""
         results = []
@@ -1649,6 +1673,7 @@ class SearchWorker(QThread):
                 'matched_lines': matched_lines,  # 매칭된 라인 추가
                 'extension': file_path.suffix.lower()  # 파일 확장자 추가
             })
+            self._report_found()
 
         return results
 
@@ -1686,6 +1711,8 @@ class SearchWorker(QThread):
         try:
             with zipfile.ZipFile(file_path) as zf:
                 for info in zf.infolist():
+                    if self.stop_flag:
+                        break
                     if info.is_dir():
                         continue
                     # 확장자는 ASCII라 CP437->CP949 보정 전후가 같으므로, 비용이 큰 이름 보정과
@@ -1743,6 +1770,7 @@ class SearchWorker(QThread):
                             'extension': ext,
                             'inner_name': inner_name
                         })
+                        self._report_found()
         except:
             pass
 
