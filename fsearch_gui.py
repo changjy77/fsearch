@@ -1015,6 +1015,12 @@ class SearchWorker(QThread):
         '.xls', '.xlsx', '.txt', '.html', '.htm', '.md', '.csv', '.json', '.xml'
     }
 
+    # 결과가 이보다 많으면 검색을 중단한다. ".doc"처럼 흔한 키워드는 trigram 인덱스가
+    # 걸러주지 못해(실측: 캐시 39,644건 중 72%가 매치) 결과가 3만 건 넘게 쏟아지고,
+    # 그 결과를 테이블에 실시간 추가+정렬+굵게강조+컬럼폭 재계산하는 GUI 후처리가
+    # 결과 수에 비례해 느려져 실측 88초간 응답 없음 상태가 된다.
+    MAX_RESULTS = 2000
+
     def __init__(self, keyword, path, ignore_dirs, name_only, content_only, use_regex, max_workers, skip_large_files=False):
         super().__init__()
         self.keyword = keyword
@@ -1309,6 +1315,15 @@ class SearchWorker(QThread):
                             self.result_found.emit(result)
                     except:
                         pass
+
+                    if len(results) >= self.MAX_RESULTS:
+                        executor.shutdown(wait=False, cancel_futures=True)
+                        self.status.emit(
+                            f"⚠️ 결과가 {self.MAX_RESULTS}건을 초과해 검색을 중단했습니다. "
+                            "검색어를 더 구체적으로 입력해주세요."
+                        )
+                        self.finished.emit(results)
+                        return
 
                     # zip 내부 파일 추출 결과가 쌓이므로 여기서도 주기적으로 저장한다
                     if len(self.new_cache_entries) >= self.CACHE_FLUSH_SIZE:
