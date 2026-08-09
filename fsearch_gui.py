@@ -2256,6 +2256,12 @@ class FSearchGUI(QMainWindow):
 
     def search(self):
         """검색 실행 또는 중지"""
+        # 결과 초과 경고로 잠긴 상태면 검색어를 바꾸기 전까지 무시한다
+        # (버튼을 setEnabled(False)로 실제 비활성화하면 Qt/Windows에서 disabled
+        # 위젯이 hover 이벤트를 받지 않아 setCursor()로 지정한 커서가 표시되지
+        # 않으므로, 버튼은 활성 상태로 두고 클릭 자체를 여기서 막는다)
+        if getattr(self, '_search_locked', False):
+            return
         # 검색 중이면 중지
         if self.is_searching:
             self.is_searching = False
@@ -2434,13 +2440,13 @@ class FSearchGUI(QMainWindow):
             self.status_label.setStyleSheet("")
 
     def on_keyword_changed(self, text):
-        """결과 초과로 비활성화된 검색 버튼을, 검색어를 다시 입력하면 활성화한다.
+        """결과 초과로 잠긴 검색을, 검색어를 다시 입력하면 풀어준다.
         init_ui()에서 검색 이력을 keyword_input에 addItems()로 채우는 시점에도
         이 시그널이 발생하는데, 그때는 아직 search_btn이 만들어지기 전이라 가드한다."""
         if not hasattr(self, 'search_btn'):
             return
-        if not self.search_btn.isEnabled():
-            self.search_btn.setEnabled(True)
+        if getattr(self, '_search_locked', False):
+            self._search_locked = False
             self.search_btn.setStyleSheet("QPushButton { }")
             self.search_btn.setCursor(Qt.ArrowCursor)
             self.status_label.setStyleSheet("")
@@ -2704,9 +2710,9 @@ class FSearchGUI(QMainWindow):
                 f"⚠️ 결과가 {self.search_worker.MAX_RESULTS}건을 초과해 검색을 중단했습니다 "
                 f"({len(results)}개 표시). 검색어를 더 구체적으로 입력해주세요."
             )
-            # 검색어를 바꾸기 전까지는 같은 상황이 반복될 뿐이므로 검색 버튼을 막는다
-            # (on_keyword_changed가 검색어 입력칸 텍스트 변경 시 다시 활성화한다)
-            self.search_btn.setEnabled(False)
+            # 검색어를 바꾸기 전까지는 같은 상황이 반복될 뿐이므로 검색을 막는다
+            # (on_keyword_changed가 검색어 입력칸 텍스트 변경 시 다시 풀어준다)
+            self._search_locked = True
             self.search_btn.setStyleSheet("QPushButton { color: gray; font-weight: bold; }")
             self.search_btn.setCursor(Qt.ForbiddenCursor)
             # 결과 테이블에 마우스를 올리면 on_table_cell_entered가 미리보기 문구로
