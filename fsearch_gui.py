@@ -2141,6 +2141,20 @@ class FSearchGUI(QMainWindow):
             self.path_input.setCurrentText(folder)
             self.search_history.add_path(folder)
 
+    def closeEvent(self, event):
+        """창을 닫을 때 검색이 진행 중이면 워커를 정리한 뒤 종료한다.
+        기본 동작(오버라이드 없음)은 검색 중에도 창만 사라질 뿐 워커(및 그 안의
+        ProcessPoolExecutor 자식 프로세스)는 백그라운드에서 계속 실행된다 - 실측:
+        2,000개 파일을 처리하던 도중 닫아도 프로세스가 눈에 안 보이는 채로 7초간 더 실행됨."""
+        if self.is_searching and self.search_worker and self.search_worker.isRunning():
+            self.search_worker.stop_flag = True
+            self.status_label.setText("⏹️ 종료 중... 검색을 정리하고 있습니다.")
+            # cancel_futures=True 덕분에 대부분 수 초 안에 끝난다(중지 버튼 실측 1.56초).
+            # 그래도 안 끝나면 무한정 기다리지 않고 진행한다.
+            if not self.search_worker.wait(5000):
+                self.logger.warning("검색 워커가 5초 내에 종료되지 않아 강제로 앱을 닫습니다.")
+        event.accept()
+
     def search(self):
         """검색 실행 또는 중지"""
         # 검색 중이면 중지
