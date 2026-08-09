@@ -532,6 +532,15 @@ class TextExtractionCache:
             "INSERT INTO text_fts(rowid, text) VALUES (new.rowid, new.text); END"
         )
 
+    @staticmethod
+    def _install_stop_handler(conn, stop_check):
+        """stop_check()가 True를 반환하면 실행 중인 SQL을 중단시킨다(SQLITE_INTERRUPT).
+        1000 VM 명령마다 호출되며 오버헤드는 무시할 수준이다(실측: 유무 차이 0.01초 이내).
+        rebuild/VACUUM은 원자적이라 중단돼도 트랜잭션이 롤백되어 이전 상태로 안전하게 남는다."""
+        if stop_check is None:
+            return
+        conn.set_progress_handler(lambda: 1 if stop_check() else 0, 1000)
+
     def index_needs_build(self) -> bool:
         """기존 캐시가 아직 색인되지 않았는지 확인 (업그레이드 후 최초 1회만 참)"""
         if not self.fts_available:
@@ -542,8 +551,10 @@ class TextExtractionCache:
         conn.close()
         return not built and bool(has_rows)
 
-    def build_index(self):
-        """기존 캐시 전체를 trigram 인덱스로 색인 (1회성, 데이터량에 비례해 수 분 소요)"""
+    def build_index(self, stop_check=None):
+        """기존 캐시 전체를 trigram 인덱스로 색인 (1회성, 데이터량에 비례해 수 분 소요).
+        stop_check가 주어지고 도중 True가 되면 rebuild를 중단한다. 중단되면 트랜잭션이
+        롤백되어 트리거도 색인도 없는 이전 상태로 남고, 다음 검색에서 다시 시도된다."""
         conn = sqlite3.connect(str(self.db_path))
         # 정리 단계의 UPDATE가 트리거를 통해 아직 비어 있는 인덱스에 delete를 시도하면
         # 인덱스가 손상되므로("database disk image is malformed"), 트리거를 잠시 걷어내고
@@ -551,7 +562,12 @@ class TextExtractionCache:
         for name in self.TRIGGER_NAMES:
             conn.execute(f"DROP TRIGGER IF EXISTS {name}")
         self._sanitize_existing(conn)
-        conn.execute("INSERT INTO text_fts(text_fts) VALUES('rebuild')")
+        self._install_stop_handler(conn, stop_check)
+        try:
+            conn.execute("INSERT INTO text_fts(text_fts) VALUES('rebuild')")
+        except sqlite3.OperationalError:
+            conn.close()
+            return
         conn.execute("INSERT OR REPLACE INTO cache_meta (key, value) VALUES ('fts_built', '1')")
         self._create_triggers(conn)
         conn.commit()
@@ -580,19 +596,26 @@ class TextExtractionCache:
             return False
         return free_pages * page_size > size * self.MAINTENANCE_FREE_RATIO
 
-    def run_maintenance(self):
+    def run_maintenance(self, stop_check=None):
         """FTS 인덱스 조각을 병합하고 빈 공간을 파일에서 회수한다.
         실측(4.26GB / 39,642건): optimize 29초 + VACUUM 62초 -> 3.05GB,
-        키워드 조회 17ms -> 4ms."""
+        키워드 조회 17ms -> 4ms.
+        stop_check가 주어지고 도중 True가 되면 중단한다. VACUUM은 임시 파일에 새로
+        만든 뒤 원본과 교체하는 방식이라, 중단돼도 원본 파일은 그대로 안전하게 남는다
+        (실측: integrity_check 'ok' 유지)."""
         # VACUUM은 트랜잭션 안에서 실행할 수 없어 자동 커밋 모드로 연결한다
         conn = sqlite3.connect(str(self.db_path), isolation_level=None)
+        self._install_stop_handler(conn, stop_check)
         try:
             if self.fts_available:
                 try:
                     conn.execute("INSERT INTO text_fts(text_fts) VALUES('optimize')")
                 except sqlite3.DatabaseError:
                     pass
-            conn.execute("VACUUM")
+            if stop_check is None or not stop_check():
+                conn.execute("VACUUM")
+        except sqlite3.OperationalError:
+            pass
         finally:
             conn.close()
 
@@ -626,11 +649,19 @@ class TextExtractionCache:
         conn.commit()
         conn.close()
 
-    def end_deferred_index(self):
+    def end_deferred_index(self, stop_check=None):
         """미뤄둔 색인을 한 번에 만들고 트리거를 복구한다.
-        추출 시점에 이미 NUL을 제거하므로 build_index()와 달리 본문 정리는 하지 않는다."""
+        추출 시점에 이미 NUL을 제거하므로 build_index()와 달리 본문 정리는 하지 않는다.
+        stop_check가 주어지고 도중 True가 되면 중단한다. 중단되면 트리거가 없는 채로
+        남지만(begin_deferred_index에서 이미 지워둔 상태), 다음 검색에서
+        index_needs_build()가 이를 감지해 build_index()로 복구한다."""
         conn = sqlite3.connect(str(self.db_path))
-        conn.execute("INSERT INTO text_fts(text_fts) VALUES('rebuild')")
+        self._install_stop_handler(conn, stop_check)
+        try:
+            conn.execute("INSERT INTO text_fts(text_fts) VALUES('rebuild')")
+        except sqlite3.OperationalError:
+            conn.close()
+            return
         conn.execute("INSERT OR REPLACE INTO cache_meta (key, value) VALUES ('fts_built', '1')")
         self._create_triggers(conn)
         conn.commit()
@@ -1048,13 +1079,21 @@ class SearchWorker(QThread):
                     # 기존 캐시를 처음 색인하는 경우이거나, 대량 추출이 도중에 끊겨
                     # 색인이 최신이 아닌 경우다. 어느 쪽이든 여기서 통째로 다시 만든다.
                     self.status.emit("🔧 검색 색인을 만드는 중입니다. 수 분 걸릴 수 있습니다...")
-                    self.text_cache.build_index()
+                    self.text_cache.build_index(stop_check=lambda: self.stop_flag)
+                    if self.stop_flag:
+                        self.status.emit("⏹️ 검색 중단됨")
+                        self.finished.emit([])
+                        return
 
                 # 캐시 정리는 검색이 끝난 뒤가 아니라 시작 전에 한다.
                 # 끝난 뒤에 하면 사용자가 곧바로 다음 검색을 시작했을 때 DB가 잠겨 충돌한다.
                 if self.text_cache.needs_maintenance():
                     self.status.emit("🧹 검색 캐시를 정리하는 중입니다. 1~2분 걸릴 수 있습니다...")
-                    self.text_cache.run_maintenance()
+                    self.text_cache.run_maintenance(stop_check=lambda: self.stop_flag)
+                    if self.stop_flag:
+                        self.status.emit("⏹️ 검색 중단됨")
+                        self.finished.emit([])
+                        return
 
                 if (self.use_regex or not self.text_cache.fts_available
                         or not _can_use_index(self.keyword)):
@@ -1122,6 +1161,10 @@ class SearchWorker(QThread):
                     extract_bytes += stat.st_size
 
                 zip_tasks, zip_entry_count = self._collect_zip_extract_tasks(zip_files)
+                if self.stop_flag:
+                    self.status.emit("⏹️ 검색 중단됨")
+                    self.finished.emit([])
+                    return
 
                 # 자식 프로세스가 PyQt5와 파서 라이브러리를 모두 import하므로 스폰 비용이 약 0.6초다.
                 # 대상이 적으면 이 비용이 파싱 시간보다 커서 손해이므로(실측: 4개 18MB 기준
@@ -1220,6 +1263,10 @@ class SearchWorker(QThread):
                         self.text_cache.end_deferred_index, index_estimate, "🔧 검색 색인을 만드는 중"
                     )
                     self.extraction_urgent.emit(False)
+                    if self.stop_flag:
+                        self.status.emit("⏹️ 검색 중단됨")
+                        self.finished.emit([])
+                        return
             self.timing['extract'] = time.time() - t_phase_start
 
             # 병렬 검색
@@ -1374,7 +1421,8 @@ class SearchWorker(QThread):
         """진행률을 알 수 없는 단일 작업(fn, 예: FTS rebuild)을 실행하는 동안,
         미리 추정한 소요 시간에서 경과 시간만큼 줄여가며 상태표시바에 남은 시간을 보여준다.
         fn은 이 메서드를 호출한 스레드에서 그대로(동기) 실행되고, 별도 스레드는 오직
-        1초 간격으로 상태 텍스트만 emit한다."""
+        1초 간격으로 상태 텍스트만 emit한다. fn에는 stop_flag를 확인하는 콜백을 넘겨,
+        도중에 중지 버튼이 눌리면 fn 내부에서 SQL 실행 자체를 중단시킬 수 있게 한다."""
         stop_event = threading.Event()
 
         def ticker():
@@ -1387,7 +1435,7 @@ class SearchWorker(QThread):
         ticker_thread = threading.Thread(target=ticker, daemon=True)
         ticker_thread.start()
         try:
-            fn()
+            fn(stop_check=lambda: self.stop_flag)
         finally:
             stop_event.set()
             ticker_thread.join(timeout=2.0)
@@ -1403,6 +1451,8 @@ class SearchWorker(QThread):
         tasks = []
         total = 0
         for zip_path in zip_files:
+            if self.stop_flag:
+                break
             zip_str = str(zip_path)
             try:
                 zip_stat = zip_path.stat()
