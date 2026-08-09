@@ -2013,7 +2013,6 @@ class FSearchGUI(QMainWindow):
         self.content_only_cb.setMaximumHeight(25)
         self.regex_cb = QCheckBox("정규식")
         self.regex_cb.setMaximumHeight(25)
-        self.regex_cb.setEnabled(False)
         self.skip_large_cb = QCheckBox("대용량파일 스킵(>10MB)")
         self.skip_large_cb.setMaximumHeight(25)
 
