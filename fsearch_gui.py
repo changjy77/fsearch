@@ -2442,6 +2442,7 @@ class FSearchGUI(QMainWindow):
         if not self.search_btn.isEnabled():
             self.search_btn.setEnabled(True)
             self.status_label.setStyleSheet("")
+            self._max_results_warning_active = False
 
     def update_progress(self, value):
         """진행바 업데이트"""
@@ -2704,9 +2705,13 @@ class FSearchGUI(QMainWindow):
             # 검색어를 바꾸기 전까지는 같은 상황이 반복될 뿐이므로 검색 버튼을 막는다
             # (on_keyword_changed가 검색어 입력칸 텍스트 변경 시 다시 활성화한다)
             self.search_btn.setEnabled(False)
+            # 결과 테이블에 마우스를 올리면 on_table_cell_entered가 미리보기 문구로
+            # 상태바를 덮어써 경고가 곧바로 사라지므로, 검색어를 바꾸기 전까지 막는다
+            self._max_results_warning_active = True
         else:
             self.status_label.setStyleSheet("")
             self.status_label.setText(f"✅ 검색 완료: {len(results)}개 결과")
+            self._max_results_warning_active = False
 
         # 로깅 - 검색 결과
         self.logger.info(f"검색 완료 - 총 {len(results)}개 결과 (파일: {len(file_counts)}개, 스킵: {self.skipped_files_count_total}개)")
@@ -2875,8 +2880,9 @@ class FSearchGUI(QMainWindow):
                 if widget and isinstance(widget, QLabel):
                     widget.setToolTip(preview_text)
 
-            # 상태 바에도 메시지 표시
-            self.status_label.setText("📝 본문에 검색어 없음 (파일명만 일치)")
+            # 상태 바에도 메시지 표시 (결과 초과 경고가 떠 있으면 덮어쓰지 않는다)
+            if not getattr(self, '_max_results_warning_active', False):
+                self.status_label.setText("📝 본문에 검색어 없음 (파일명만 일치)")
             return
 
         # matched_lines가 있으면 미리보기 표시
@@ -2898,8 +2904,8 @@ class FSearchGUI(QMainWindow):
                 if widget and isinstance(widget, QLabel):
                     widget.setToolTip(preview_text)
 
-            # 상태 바에도 미리보기 표시 (첫 번째 문장)
-            if matched_lines and len(matched_lines) > 0:
+            # 상태 바에도 미리보기 표시 (첫 번째 문장, 결과 초과 경고가 떠 있으면 덮어쓰지 않는다)
+            if matched_lines and len(matched_lines) > 0 and not getattr(self, '_max_results_warning_active', False):
                 status_msg = matched_lines[0]
                 if len(status_msg) > 100:
                     status_msg = status_msg[:100] + "..."
