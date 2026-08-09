@@ -927,6 +927,8 @@ class SearchWorker(QThread):
                             entry = (mtime, size, text)
                             self.file_cache[path_str] = entry
                             self.new_cache_entries[path_str] = entry
+                            if len(self.new_cache_entries) >= self.CACHE_FLUSH_SIZE:
+                                self._flush_cache()
             self.timing['extract'] = time.time() - t_phase_start
 
             # 병렬 검색
@@ -970,6 +972,10 @@ class SearchWorker(QThread):
                     except:
                         pass
 
+                    # zip 내부 파일 추출 결과가 쌓이므로 여기서도 주기적으로 저장한다
+                    if len(self.new_cache_entries) >= self.CACHE_FLUSH_SIZE:
+                        self._flush_cache()
+
                     processed += futures[future]
                     pct = int((processed / len(files)) * 100)
                     # 진행바는 정수 퍼센트 단위라 값이 바뀔 때만 보내면 표시 결과가 같다
@@ -1000,7 +1006,7 @@ class SearchWorker(QThread):
         except Exception as e:
             self.error.emit(f"오류 발생: {str(e)}")
         finally:
-            self.text_cache.save_entries(self.new_cache_entries)
+            self._flush_cache()
 
     def _collect_files(self) -> List[Path]:
         """파일 수집 - 지정된 파일 형식만"""
@@ -1061,6 +1067,22 @@ class SearchWorker(QThread):
         self.excluded_files_updated.emit(self.excluded_files)
 
         return files
+
+    # 검색이 중간에 끊겨도 진행분이 남도록 이 개수마다 캐시를 디스크에 저장한다.
+    # 저장 자체에 비용이 있으므로(FTS 인덱스 갱신 포함) 너무 잦지 않게 잡는다.
+    CACHE_FLUSH_SIZE = 500
+
+    def _flush_cache(self):
+        """지금까지 추출한 항목을 디스크에 저장하고 버퍼를 비운다.
+        저장은 검색이 끝난 뒤 한 번만 하면 중단 시 그동안의 추출 결과가 전부 사라지므로
+        (D:/ 전체처럼 오래 걸리는 검색에서는 매번 처음부터 다시 추출하게 됨) 중간중간 호출한다."""
+        with self.cache_lock:
+            if not self.new_cache_entries:
+                return
+            pending = self.new_cache_entries
+            self.new_cache_entries = {}
+        # 디스크 저장은 느리므로 락을 놓은 뒤 수행한다
+        self.text_cache.save_entries(pending)
 
     def _extract_text(self, file_path: Path) -> str:
         """파일 형식별로 텍스트 추출 (디스크 캐시 지원 - 재검색 시 재사용)"""
