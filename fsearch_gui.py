@@ -1962,11 +1962,6 @@ class FSearchGUI(QMainWindow):
         self.workers_spin.setMaximumHeight(25)
         options2_layout.addWidget(self.workers_spin)
 
-        self.refresh_btn = QPushButton("🔄 새로고침")
-        self.refresh_btn.clicked.connect(self.refresh_cache)
-        self.refresh_btn.setMaximumHeight(25)
-        options2_layout.addWidget(self.refresh_btn)
-
         self.excluded_btn = QPushButton("📁 제외된 파일")
         self.excluded_btn.clicked.connect(self.show_excluded_files)
         self.excluded_btn.setMaximumHeight(25)
@@ -2651,10 +2646,6 @@ class FSearchGUI(QMainWindow):
         self.status_label.setText("오류 발생")
         # 로깅
         self.logger.error(f"검색 오류: {error}")
-
-    def refresh_cache(self):
-        """캐시 새로고침"""
-        QMessageBox.information(self, "캐시", "검색 시 파일 목록이 새로 수집됩니다.")
 
     def on_table_cell_entered(self, row, column):
         """테이블 셀 호버 시 미리보기 표시 및 행 하이라이트 (QLabel 위젯과 QTableWidgetItem 모두 처리)"""
