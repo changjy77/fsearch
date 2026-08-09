@@ -545,6 +545,45 @@ class TextExtractionCache:
         conn.commit()
         conn.close()
 
+    # 빈 공간이 이 비율을 넘으면 정리한다. 정리 자체가 수십 초 걸리므로 자주 하지 않는다.
+    MAINTENANCE_FREE_RATIO = 0.10
+    MAINTENANCE_MIN_SIZE = 200 * 1024 * 1024
+
+    def needs_maintenance(self) -> bool:
+        """회수할 빈 공간이 충분히 쌓였는지 확인.
+        증분 쓰기가 쌓이면 삭제된 행이 남긴 페이지가 파일에 그대로 남는다
+        (실측: 4.26GB 중 658MB)."""
+        try:
+            size = self.db_path.stat().st_size
+        except OSError:
+            return False
+        if size < self.MAINTENANCE_MIN_SIZE:
+            return False
+        try:
+            conn = sqlite3.connect(str(self.db_path))
+            page_size = conn.execute("PRAGMA page_size").fetchone()[0]
+            free_pages = conn.execute("PRAGMA freelist_count").fetchone()[0]
+            conn.close()
+        except sqlite3.DatabaseError:
+            return False
+        return free_pages * page_size > size * self.MAINTENANCE_FREE_RATIO
+
+    def run_maintenance(self):
+        """FTS 인덱스 조각을 병합하고 빈 공간을 파일에서 회수한다.
+        실측(4.26GB / 39,642건): optimize 29초 + VACUUM 62초 -> 3.05GB,
+        키워드 조회 17ms -> 4ms."""
+        # VACUUM은 트랜잭션 안에서 실행할 수 없어 자동 커밋 모드로 연결한다
+        conn = sqlite3.connect(str(self.db_path), isolation_level=None)
+        try:
+            if self.fts_available:
+                try:
+                    conn.execute("INSERT INTO text_fts(text_fts) VALUES('optimize')")
+                except sqlite3.DatabaseError:
+                    pass
+            conn.execute("VACUUM")
+        finally:
+            conn.close()
+
     def row_count(self) -> int:
         """캐시에 들어 있는 항목 수 (색인 전략 판단용)"""
         conn = sqlite3.connect(str(self.db_path))
@@ -997,6 +1036,12 @@ class SearchWorker(QThread):
                     # 색인이 최신이 아닌 경우다. 어느 쪽이든 여기서 통째로 다시 만든다.
                     self.status.emit("🔧 검색 색인을 만드는 중입니다. 수 분 걸릴 수 있습니다...")
                     self.text_cache.build_index()
+
+                # 캐시 정리는 검색이 끝난 뒤가 아니라 시작 전에 한다.
+                # 끝난 뒤에 하면 사용자가 곧바로 다음 검색을 시작했을 때 DB가 잠겨 충돌한다.
+                if self.text_cache.needs_maintenance():
+                    self.status.emit("🧹 검색 캐시를 정리하는 중입니다. 1~2분 걸릴 수 있습니다...")
+                    self.text_cache.run_maintenance()
 
                 if (self.use_regex or not self.text_cache.fts_available
                         or not _can_use_index(self.keyword)):
