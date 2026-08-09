@@ -1143,6 +1143,7 @@ class SearchWorker(QThread):
                     self.status.emit(f"⚙️ {total_targets}개 파일 텍스트 추출 중...")
                     extract_start = time.monotonic()
                     extracted_count = 0
+                    extracted_chars = 0
                     last_eta_emit = 0.0
                     with ProcessPoolExecutor(max_workers=self.max_workers) as pool:
                         extract_futures = {}
@@ -1165,17 +1166,20 @@ class SearchWorker(QThread):
                                 continue
                             # zip 워커는 여러 항목을 묶어서, 일반 워커는 한 항목을 돌려준다
                             entries = result if extract_futures[future] else [result]
+                            chars_this_batch = 0
                             for path_str, key0, key1, text in entries:
                                 if key0 is None:
                                     continue
                                 entry = (key0, key1, text)
                                 self.file_cache[path_str] = entry
                                 self.new_cache_entries[path_str] = entry
+                                chars_this_batch += len(text)
                             if len(self.new_cache_entries) >= self.CACHE_FLUSH_SIZE:
                                 self._flush_cache()
 
                             if defer_index:
                                 extracted_count += len(entries)
+                                extracted_chars += chars_this_batch
                                 now = time.monotonic()
                                 if now - last_eta_emit >= 1.0:
                                     last_eta_emit = now
@@ -1184,8 +1188,15 @@ class SearchWorker(QThread):
                                     # 뒤부터 추정해 첫 표시부터 크게 틀리지 않게 한다.
                                     elapsed = now - extract_start
                                     if extracted_count >= 20:
-                                        remaining = (elapsed / extracted_count) * (total_targets - extracted_count)
-                                        eta_text = _format_remaining(remaining)
+                                        extraction_remaining = (elapsed / extracted_count) * (total_targets - extracted_count)
+                                        # 이 검색이 "완성"되려면 추출 뒤 색인 생성(rebuild)까지
+                                        # 필요하므로, 지금까지의 평균 본문 크기로 전체 본문량을
+                                        # 추정해 rebuild 예상 시간(실측 0.110초/M자)까지 더한다.
+                                        avg_chars = extracted_chars / extracted_count
+                                        estimated_total_chars = avg_chars * total_targets
+                                        index_estimate = (estimated_total_chars / 1_000_000
+                                                          * self.INDEX_BUILD_SEC_PER_MILLION_CHARS)
+                                        eta_text = _format_remaining(extraction_remaining + index_estimate)
                                     else:
                                         eta_text = "계산 중..."
                                     self.status.emit(
@@ -1197,8 +1208,17 @@ class SearchWorker(QThread):
                     # 남은 항목까지 저장한 뒤 색인을 한 번에 만든다.
                     # 이 단계도 캐시DB가 아직 "완성"되지 않은 상태이므로 깜박임은 유지한다.
                     self._flush_cache()
-                    self.status.emit("🔧 검색 색인을 만드는 중입니다...")
-                    self.text_cache.end_deferred_index()
+                    if extracted_count > 0:
+                        # 실제로 저장된 전체 행 수(기존 캐시 + 이번 추출분) 기준으로
+                        # rebuild가 훑을 본문량을 다시 추정한다(추출 중 추정보다 정확함).
+                        avg_chars = extracted_chars / extracted_count
+                        index_estimate = (avg_chars * self.text_cache.row_count() / 1_000_000
+                                         * self.INDEX_BUILD_SEC_PER_MILLION_CHARS)
+                    else:
+                        index_estimate = 0.0
+                    self._run_with_countdown(
+                        self.text_cache.end_deferred_index, index_estimate, "🔧 검색 색인을 만드는 중"
+                    )
                     self.extraction_urgent.emit(False)
             self.timing['extract'] = time.time() - t_phase_start
 
@@ -1345,6 +1365,32 @@ class SearchWorker(QThread):
     # 검색이 중간에 끊겨도 진행분이 남도록 이 개수마다 캐시를 디스크에 저장한다.
     # 저장 자체에 비용이 있으므로(FTS 인덱스 갱신 포함) 너무 잦지 않게 잡는다.
     CACHE_FLUSH_SIZE = 500
+
+    # FTS5 rebuild 소요 시간 실측치(본문 1M자당 초). 캐시DB가 비어 있어 색인 생성을
+    # 뒤로 미룬 대량 추출 중 "캐시DB 완성까지" 남은 시간을 추정하는 데 쓴다.
+    INDEX_BUILD_SEC_PER_MILLION_CHARS = 0.110
+
+    def _run_with_countdown(self, fn, estimate_seconds, label):
+        """진행률을 알 수 없는 단일 작업(fn, 예: FTS rebuild)을 실행하는 동안,
+        미리 추정한 소요 시간에서 경과 시간만큼 줄여가며 상태표시바에 남은 시간을 보여준다.
+        fn은 이 메서드를 호출한 스레드에서 그대로(동기) 실행되고, 별도 스레드는 오직
+        1초 간격으로 상태 텍스트만 emit한다."""
+        stop_event = threading.Event()
+
+        def ticker():
+            start = time.monotonic()
+            while not stop_event.wait(1.0):
+                remaining = max(0.0, estimate_seconds - (time.monotonic() - start))
+                self.status.emit(f"{label}... (남은 시간 약 {_format_remaining(remaining)})")
+
+        self.status.emit(f"{label}... (남은 시간 약 {_format_remaining(estimate_seconds)})")
+        ticker_thread = threading.Thread(target=ticker, daemon=True)
+        ticker_thread.start()
+        try:
+            fn()
+        finally:
+            stop_event.set()
+            ticker_thread.join(timeout=2.0)
 
     # zip 하나에 엔트리가 수천 개인 경우가 있어, 한 작업이 너무 커지지 않도록 나눈다
     # (워커가 돌려주는 텍스트가 한꺼번에 메모리에 올라오고 부하 분배도 나빠진다).
