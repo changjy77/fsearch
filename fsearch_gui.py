@@ -763,6 +763,42 @@ def _extract_text_worker(file_path_str: str):
     return (file_path_str, mtime, size, text)
 
 
+def _extract_zip_entries_worker(task):
+    """ProcessPoolExecutor 워커 진입점: zip 하나에서 지정된 내부 파일들의 텍스트를 추출.
+    zip 내부 파일도 일반 문서와 같은 CPU 바운드 파싱이라 스레드에서는 GIL에 묶여 직렬화된다
+    (실측: 엔트리당 23.8ms, 3만여 건 기준 약 13분). zip을 엔트리마다 여는 낭비를 피하려고
+    한 번 연 zip에서 여러 엔트리를 처리하고, 결과를 묶어서 돌려준다.
+
+    task: (zip 경로 문자열, [(내부 파일명, 확장자), ...])
+    반환: [(캐시키, CRC, 크기, 텍스트), ...]  - 캐시키는 'zip경로!내부파일명'
+    """
+    zip_path_str, entries = task
+    results = []
+    try:
+        with zipfile.ZipFile(zip_path_str) as zf:
+            for inner_name, ext in entries:
+                tmp_path = None
+                try:
+                    info = zf.getinfo(inner_name)
+                    data = zf.read(inner_name)
+                    with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+                        tmp.write(data)
+                        tmp_path = tmp.name
+                    text = _extract_text_impl(Path(tmp_path))
+                    results.append((f"{zip_path_str}!{inner_name}", info.CRC, info.file_size, text))
+                except Exception:
+                    continue
+                finally:
+                    if tmp_path:
+                        try:
+                            os.unlink(tmp_path)
+                        except OSError:
+                            pass
+    except Exception:
+        pass
+    return results
+
+
 class SearchWorker(QThread):
     """검색을 별도 스레드에서 실행"""
     progress = pyqtSignal(int)
@@ -878,16 +914,20 @@ class SearchWorker(QThread):
 
             # CPU 바운드 텍스트 추출을 프로세스로 미리 처리
             # (GIL 하 스레드는 파싱을 사실상 직렬화함: 실측 결과 16스레드로도 1.03배에 그침)
-            # 캐시에 이미 있는 파일은 대상에서 제외하고, 추출 결과는 file_cache에 채워 넣어
+            # 캐시에 이미 있는 항목은 대상에서 제외하고, 추출 결과는 file_cache에 채워 넣어
             # 이어지는 검색 단계(스레드)가 재파싱 없이 그대로 재사용하게 한다.
-            # zip 내부 파일과 .doc/.ppt(내용 추출 불가)는 대상에서 제외한다.
+            # .doc/.ppt는 내용 추출 자체가 불가하므로 제외한다.
             t_phase_start = time.time()
             if not self.name_only:
                 extract_targets = []
                 extract_bytes = 0
+                zip_files = []
                 for f in files:
                     ext = f.suffix.lower()
-                    if ext == '.zip' or ext in ('.doc', '.ppt'):
+                    if ext == '.zip':
+                        zip_files.append(f)
+                        continue
+                    if ext in ('.doc', '.ppt'):
                         continue
                     try:
                         stat = f.stat()
@@ -902,16 +942,24 @@ class SearchWorker(QThread):
                     extract_targets.append(f)
                     extract_bytes += stat.st_size
 
+                zip_tasks, zip_entry_count = self._collect_zip_extract_tasks(zip_files)
+
                 # 자식 프로세스가 PyQt5와 파서 라이브러리를 모두 import하므로 스폰 비용이 약 0.6초다.
                 # 대상이 적으면 이 비용이 파싱 시간보다 커서 손해이므로(실측: 4개 18MB 기준
                 # 스레드 0.53초 vs 프로세스풀 1.27초, 8개 31MB부터 프로세스풀이 유리) 그때는
                 # 사전 추출을 건너뛰고 이어지는 검색 단계의 스레드가 처리하게 둔다.
-                worth_pool = len(extract_targets) >= 8 or extract_bytes >= 32 * 1024 * 1024
+                total_targets = len(extract_targets) + zip_entry_count
+                worth_pool = total_targets >= 8 or extract_bytes >= 32 * 1024 * 1024
 
-                if extract_targets and worth_pool:
-                    self.status.emit(f"⚙️ {len(extract_targets)}개 파일 텍스트 추출 중...")
+                if total_targets and worth_pool:
+                    self.status.emit(f"⚙️ {total_targets}개 파일 텍스트 추출 중...")
                     with ProcessPoolExecutor(max_workers=self.max_workers) as pool:
-                        extract_futures = {pool.submit(_extract_text_worker, str(f)): f for f in extract_targets}
+                        extract_futures = {}
+                        for f in extract_targets:
+                            extract_futures[pool.submit(_extract_text_worker, str(f))] = False
+                        for task in zip_tasks:
+                            extract_futures[pool.submit(_extract_zip_entries_worker, task)] = True
+
                         for future in as_completed(extract_futures):
                             if self.stop_flag:
                                 pool.shutdown(wait=False, cancel_futures=True)
@@ -919,14 +967,17 @@ class SearchWorker(QThread):
                                 self.finished.emit([])
                                 return
                             try:
-                                path_str, mtime, size, text = future.result()
+                                result = future.result()
                             except Exception:
                                 continue
-                            if mtime is None:
-                                continue
-                            entry = (mtime, size, text)
-                            self.file_cache[path_str] = entry
-                            self.new_cache_entries[path_str] = entry
+                            # zip 워커는 여러 항목을 묶어서, 일반 워커는 한 항목을 돌려준다
+                            entries = result if extract_futures[future] else [result]
+                            for path_str, key0, key1, text in entries:
+                                if key0 is None:
+                                    continue
+                                entry = (key0, key1, text)
+                                self.file_cache[path_str] = entry
+                                self.new_cache_entries[path_str] = entry
                             if len(self.new_cache_entries) >= self.CACHE_FLUSH_SIZE:
                                 self._flush_cache()
             self.timing['extract'] = time.time() - t_phase_start
@@ -1071,6 +1122,66 @@ class SearchWorker(QThread):
     # 검색이 중간에 끊겨도 진행분이 남도록 이 개수마다 캐시를 디스크에 저장한다.
     # 저장 자체에 비용이 있으므로(FTS 인덱스 갱신 포함) 너무 잦지 않게 잡는다.
     CACHE_FLUSH_SIZE = 500
+
+    # zip 하나에 엔트리가 수천 개인 경우가 있어, 한 작업이 너무 커지지 않도록 나눈다
+    # (워커가 돌려주는 텍스트가 한꺼번에 메모리에 올라오고 부하 분배도 나빠진다).
+    # 너무 잘게 나누면 작업마다 zip을 다시 열어 중앙 디렉터리를 읽는 비용이 붙는다.
+    ZIP_TASK_CHUNK = 100
+
+    def _collect_zip_extract_tasks(self, zip_files):
+        """zip 내부 파일 중 캐시에 없는 것들을 프로세스풀 작업 단위로 묶는다.
+        반환: ([(zip경로, [(내부파일명, 확장자), ...]), ...], 총 엔트리 수)"""
+        tasks = []
+        total = 0
+        for zip_path in zip_files:
+            zip_str = str(zip_path)
+            try:
+                zip_stat = zip_path.stat()
+            except OSError:
+                continue
+            zip_key = (zip_stat.st_mtime, zip_stat.st_size)
+
+            # zip 자체가 그대로이고 내부 파일이 모두 캐시된 적이 있으면 중앙 디렉터리를
+            # 다시 읽지 않는다. 이 열거는 zip 298개 기준 0.4초로, 캐시가 다 찬 뒤에도
+            # 매 검색마다 발생하면 그만큼 손해다.
+            marker = self.file_cache.get(zip_str)
+            if marker and (marker[0], marker[1]) == zip_key:
+                continue
+
+            try:
+                with zipfile.ZipFile(zip_path) as zf:
+                    infos = zf.infolist()
+            except Exception:
+                continue
+
+            pending = []
+            for info in infos:
+                if info.is_dir():
+                    continue
+                ext = self._entry_ext(info.filename)
+                # .doc/.ppt는 내용 추출을 지원하지 않아 검색 단계에서도 본문을 보지 않는다
+                if ext not in SearchWorker.EXTRACTABLE_EXTENSIONS or ext in ('.doc', '.ppt'):
+                    continue
+                if self.skip_large_files and info.file_size > 10 * 1024 * 1024:
+                    continue
+                # 캐시 키는 검색 단계(_extract_zip_entry_text)와 동일한 형식이어야 한다
+                cached = self.file_cache.get(f"{zip_str}!{info.filename}")
+                if cached and (cached[0], cached[1]) == (info.CRC, info.file_size):
+                    continue
+                pending.append((info.filename, ext))
+
+            if pending:
+                for i in range(0, len(pending), self.ZIP_TASK_CHUNK):
+                    tasks.append((zip_str, pending[i:i + self.ZIP_TASK_CHUNK]))
+                total += len(pending)
+            else:
+                # 내부 파일이 모두 캐시돼 있으므로 다음 검색부터는 열지 않아도 된다는 표시.
+                # zip 자체는 텍스트 추출 대상이 아니라 이 키가 본문으로 읽히는 일은 없다.
+                entry = (zip_key[0], zip_key[1], "")
+                self.file_cache[zip_str] = entry
+                self.new_cache_entries[zip_str] = entry
+
+        return tasks, total
 
     def _flush_cache(self):
         """지금까지 추출한 항목을 디스크에 저장하고 버퍼를 비운다.
