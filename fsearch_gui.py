@@ -1795,6 +1795,8 @@ class FSearchGUI(QMainWindow):
         self.search_worker = None
         self.is_searching = False  # 검색 진행 중 플래그
         self.results = []
+        self.sort_column = None  # 헤더 클릭 정렬 기준 컬럼 (None이면 업무 연관도순)
+        self.sort_ascending = True
         self.excluded_files = []  # 제외된 파일 목록
         self.read_files = []  # 읽은 파일 목록 (누적)
         self.no_match_files = []  # 검색어 미포함 파일 목록 (누적)
@@ -2025,10 +2027,17 @@ class FSearchGUI(QMainWindow):
         self.table.horizontalHeader().setSectionResizeMode(1, 0)  # 경로: 사용자가 드래그로 크기 조절 가능(Interactive)
         self.table.verticalHeader().setVisible(False)  # 행 번호 숨김
         self.table.setSelectionBehavior(0)  # 행 선택 모드
-        self.table.setSortingEnabled(False)  # ✅ 정렬 기능 비활성화
+        # Qt 내장 정렬(setSortingEnabled)은 쓰지 않는다: 파일명/경로 컬럼은 아이콘·강조 표시를
+        # cellWidget(QLabel)으로 그리는데 Qt 정렬은 QTableWidgetItem의 텍스트만 보고, 크기/검색
+        # 단어수는 "1.2 MB"/"10"처럼 화면 표시용 문자열이라 문자열 정렬하면 숫자 순서와 어긋난다
+        # (예: "10 KB"가 "2 MB"보다 앞에 옴). 대신 self.results(원본 값)를 정렬해 테이블을
+        # 다시 그리는 방식으로 헤더 클릭 정렬을 구현한다.
+        self.table.setSortingEnabled(False)
         self.table.setMouseTracking(True)  # ✅ 마우스 트래킹 활성화 (호버 감지용)
         self.table.cellDoubleClicked.connect(self.open_file)  # 더블클릭 시 파일 실행 (QLabel/Item 모두 처리)
         self.table.cellEntered.connect(self.on_table_cell_entered)  # 마우스 호버 시 미리보기 표시 (QLabel 포함)
+        self.table.horizontalHeader().setSortIndicatorShown(True)
+        self.table.horizontalHeader().sectionClicked.connect(self.on_header_clicked)
 
         self.tabs.addTab(self.table, "🗂️ 결과 (테이블)")
 
@@ -2858,8 +2867,46 @@ class FSearchGUI(QMainWindow):
 
         return score
 
+    # 헤더 클릭 정렬의 컬럼별 정렬 키. 파일명은 zip 내부 표시("압축파일 → 내부파일")까지 반영해
+    # 엑셀 내보내기(export_to_excel)와 동일한 이름 규칙을 쓴다.
+    def _sort_key_filename(self, result):
+        name = Path(result['full_path']).name
+        if 'inner_name' in result:
+            name = f"{name} → {result['inner_name']}"
+        return name.lower()
+
+    _HEADER_SORT_KEYS = {
+        0: _sort_key_filename,
+        1: lambda self, result: result['folder_path'].lower(),
+        2: lambda self, result: result['size'],
+        3: lambda self, result: result['modified'],  # "YYYY-MM-DD HH:MM:SS" 형식이라 문자열 정렬 = 시간순
+        4: lambda self, result: result.get('match_count', 0),
+    }
+
+    def on_header_clicked(self, column):
+        """테이블 헤더 클릭 시 해당 컬럼 기준으로 정렬하고 테이블을 다시 그린다.
+        같은 컬럼을 다시 클릭하면 오름차순/내림차순을 토글한다."""
+        if column not in self._HEADER_SORT_KEYS:
+            return
+        if self.sort_column == column:
+            self.sort_ascending = not self.sort_ascending
+        else:
+            self.sort_column = column
+            self.sort_ascending = True
+
+        key_fn = self._HEADER_SORT_KEYS[column]
+        self.results.sort(key=lambda r: key_fn(self, r), reverse=not self.sort_ascending)
+
+        self.table.setRowCount(0)
+        for result in self.results:
+            self.add_result_row(result)
+
+        order = Qt.AscendingOrder if self.sort_ascending else Qt.DescendingOrder
+        self.table.horizontalHeader().setSortIndicator(column, order)
+
     def sort_results_by_match_count(self):
         """업무 연관도 기준으로 정렬하고 테이블 재구성"""
+        self.sort_column = None  # 새 검색 결과이므로 이전 헤더 클릭 정렬 기준을 초기화
         # self.results를 연관도 점수 기준 내림차순으로 정렬
         self.results.sort(key=lambda x: self.calculate_relevance_score(x), reverse=True)
 
