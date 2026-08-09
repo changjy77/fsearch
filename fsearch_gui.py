@@ -2088,7 +2088,7 @@ class FSearchGUI(QMainWindow):
             "검색 단어수"
         ])
         # 동적 크기 조정 설정
-        self.table.horizontalHeader().setStretchLastSection(False)
+        self.table.horizontalHeader().setStretchLastSection(True)
         self.table.horizontalHeader().setSectionResizeMode(1, 0)  # 경로: 사용자가 드래그로 크기 조절 가능(Interactive)
         self.table.verticalHeader().setVisible(False)  # 행 번호 숨김
         self.table.setSelectionBehavior(0)  # 행 선택 모드
@@ -2575,6 +2575,14 @@ class FSearchGUI(QMainWindow):
 
         # 컬럼 너비 자동 조정
         self.table.resizeColumnsToContents()
+        # resizeColumnsToContents()는 stretchLastSection을 즉시 재적용하지 않으므로
+        # (헤더 크기 자체는 안 바뀌어 리사이즈 이벤트가 발생하지 않음), 마지막 컬럼이
+        # 남는 공간을 채우도록 폭을 직접 계산해 창 전체 너비를 채운다.
+        last_col = self.table.columnCount() - 1
+        other_width = sum(self.table.columnWidth(c) for c in range(last_col))
+        viewport_width = self.table.viewport().width()
+        if viewport_width > other_width:
+            self.table.setColumnWidth(last_col, viewport_width - other_width)
 
         # 텍스트 탭 업데이트 (검색어 굵게 표기)
         text_output = "<html><body><pre>검색 결과:\n" + "="*100 + "\n\n"
