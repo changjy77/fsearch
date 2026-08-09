@@ -2441,6 +2441,8 @@ class FSearchGUI(QMainWindow):
             return
         if not self.search_btn.isEnabled():
             self.search_btn.setEnabled(True)
+            self.search_btn.setStyleSheet("QPushButton { }")
+            self.search_btn.setCursor(Qt.ArrowCursor)
             self.status_label.setStyleSheet("")
             self._max_results_warning_active = False
 
@@ -2705,6 +2707,8 @@ class FSearchGUI(QMainWindow):
             # 검색어를 바꾸기 전까지는 같은 상황이 반복될 뿐이므로 검색 버튼을 막는다
             # (on_keyword_changed가 검색어 입력칸 텍스트 변경 시 다시 활성화한다)
             self.search_btn.setEnabled(False)
+            self.search_btn.setStyleSheet("QPushButton { color: gray; font-weight: bold; }")
+            self.search_btn.setCursor(Qt.ForbiddenCursor)
             # 결과 테이블에 마우스를 올리면 on_table_cell_entered가 미리보기 문구로
             # 상태바를 덮어써 경고가 곧바로 사라지므로, 검색어를 바꾸기 전까지 막는다
             self._max_results_warning_active = True
@@ -2913,10 +2917,13 @@ class FSearchGUI(QMainWindow):
 
     def open_file(self, row, column):
         """파일 또는 폴더 열기 (더블클릭 시 호출 - 검색 중/완료 모두 처리)"""
+        # 결과 초과 경고가 떠 있는 동안은 검색어를 바꾸기 전까지 상태바를 건드리지 않는다
+        allow_status = not getattr(self, '_max_results_warning_active', False)
         try:
             # 행 번호 범위 검증
             if row < 0 or row >= self.table.rowCount():
-                self.status_label.setText("❌ 유효하지 않은 행입니다")
+                if allow_status:
+                    self.status_label.setText("❌ 유효하지 않은 행입니다")
                 return
 
             file_path = None
@@ -2948,19 +2955,22 @@ class FSearchGUI(QMainWindow):
 
             # 파일 경로 검증
             if not file_path or not isinstance(file_path, str):
-                self.status_label.setText("❌ 파일 경로 정보가 없습니다")
+                if allow_status:
+                    self.status_label.setText("❌ 파일 경로 정보가 없습니다")
                 return
 
             # 문자열 정리
             file_path = str(file_path).strip()
             if not file_path:
-                self.status_label.setText("❌ 파일 경로가 비어있습니다")
+                if allow_status:
+                    self.status_label.setText("❌ 파일 경로가 비어있습니다")
                 return
 
             # 경로 존재 여부 확인
             path_obj = Path(file_path)
             if not path_obj.exists():
-                self.status_label.setText(f"❌ 파일을 찾을 수 없습니다: {file_path}")
+                if allow_status:
+                    self.status_label.setText(f"❌ 파일을 찾을 수 없습니다: {file_path}")
                 return
 
             # 파일 실행
@@ -2972,7 +2982,8 @@ class FSearchGUI(QMainWindow):
                 subprocess.Popen(['xdg-open', file_path])
 
             filename = path_obj.name
-            self.status_label.setText(f"✅ 파일 열음: {filename}")
+            if allow_status:
+                self.status_label.setText(f"✅ 파일 열음: {filename}")
 
             # 로깅
             if hasattr(self, 'logger'):
@@ -2980,7 +2991,8 @@ class FSearchGUI(QMainWindow):
 
         except Exception as e:
             error_msg = f"파일 실행 오류: {str(e)}"
-            self.status_label.setText(f"❌ {error_msg}")
+            if allow_status:
+                self.status_label.setText(f"❌ {error_msg}")
             if hasattr(self, 'logger'):
                 self.logger.error(error_msg)
 
