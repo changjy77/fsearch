@@ -2706,7 +2706,7 @@ class FSearchGUI(QMainWindow):
         # 이 "완료" 메시지로 즉시 덮어써져 사용자가 볼 새도 없이 사라지므로
         # (finished 신호 직전에 emit되지만 GUI 스레드에서 연속 처리됨) 유지한다.
         if self.search_worker and getattr(self.search_worker, '_max_results_hit', False):
-            self.status_label.setStyleSheet("color: #FF0000; font-weight: bold;")
+            self.status_label.setStyleSheet("color: #00008B; font-weight: bold;")
             self.status_label.setText(
                 f"⚠️ 결과가 {self.search_worker.MAX_RESULTS}건을 초과해 검색을 중단했습니다 "
                 f"({len(results)}개 표시). 검색어를 더 구체적으로 입력해주세요."
