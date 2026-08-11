@@ -273,21 +273,11 @@ fsearch/
 ├── fsearch_gui.py          # 메인 프로그램 (~3,400줄)
 ├── fsearch.spec            # PyInstaller 빌드 설정
 ├── requirements.txt        # 의존 라이브러리
-├── requirements-dev.txt    # 개발용 의존 라이브러리 (pytest)
-├── tests/                  # 자동화 테스트 (SearchHistory/TextExtractionCache/SearchWorker)
 ├── README.md               # 사용 설명서
 ├── .gitignore              # Git 무시 파일
 └── dist/
     └── fsearch.exe         # 배포용 실행 파일 (약 69MB)
 ```
-
-### 테스트 실행
-```bash
-pip install -r requirements-dev.txt
-pytest tests/ -v
-```
-검색 이력, 텍스트 캐시/FTS5 색인 로직, 검색 엔진(결과 상한 2,000건 처리 포함)을 다룹니다.
-실제 `~/.fsearch/` 캐시·이력 파일은 건드리지 않고 매 테스트마다 격리된 임시 파일을 사용합니다.
 
 ### 주요 클래스
 - **SearchWorker**: QThread 기반 검색 엔진 (프로세스풀 추출 + 스레드풀 검색)
