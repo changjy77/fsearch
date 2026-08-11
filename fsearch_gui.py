@@ -20,7 +20,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
-from typing import List
+from typing import List, Optional
 from collections import defaultdict
 
 from PyQt5.QtWidgets import (
@@ -114,8 +114,8 @@ class SearchHistory:
                         if 'excluded_stats' not in data:
                             data['excluded_stats'] = {}
                         return data
-            except:
-                pass
+            except Exception as e:
+                logging.getLogger(__name__).warning(f"검색 기록 로드 실패: {e}")
         return {
             'keywords': [],
             'paths': [],
@@ -127,8 +127,8 @@ class SearchHistory:
         try:
             with open(self.history_file, 'w', encoding='utf-8') as f:
                 json.dump(self.data, f, ensure_ascii=False, indent=2)
-        except:
-            pass
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"검색 기록 저장 실패: {e}")
 
     def add_keyword(self, keyword):
         """검색어 추가 (중복 제거, 최대 10개)"""
@@ -814,22 +814,25 @@ def _strip_nul(text: str) -> str:
     return text.replace('\x00', ' ') if text else text
 
 
-def _extract_text_impl(file_path: Path) -> str:
+def _extract_text_impl(file_path: Path) -> Optional[str]:
     """파일 형식별 텍스트 추출 (실제 파싱 로직)
     모듈 레벨 함수 - SearchWorker(QThread)의 인스턴스 메서드는 pickle이 불가능해
     ProcessPoolExecutor 워커로 전달할 수 없으므로 클래스 밖에 둔다."""
     return _strip_nul(_extract_text_raw(file_path, file_path.suffix.lower()))
 
 
-def _extract_text_from_bytes(data: bytes, ext: str) -> str:
+def _extract_text_from_bytes(data: bytes, ext: str) -> Optional[str]:
     """이미 메모리에 있는 내용에서 바로 텍스트 추출 (zip 내부 파일용).
     임시파일로 썼다가 파서가 다시 읽는 왕복을 없앤다(실측 엔트리당 2.16ms)."""
     return _strip_nul(_extract_text_raw(data, ext))
 
 
-def _extract_text_raw(source, ext: str) -> str:
+def _extract_text_raw(source, ext: str):
     """파일 형식별 텍스트 추출 (형식별 분기 본체).
-    source는 파일 경로(Path) 또는 파일 내용(bytes) 둘 다 받는다."""
+    source는 파일 경로(Path) 또는 파일 내용(bytes) 둘 다 받는다.
+    반환값은 성공 시 문자열(빈 문서면 ""), 파싱 자체가 실패하면 None이다.
+    이 구분이 있어야 호출부(SearchWorker.run())가 "정말 실패한 파일"을
+    집계해 로그로 남길 수 있다 - 이전에는 둘 다 ""라 조용히 묻혔다."""
     try:
         if ext == '.txt' or ext == '.md' or ext == '.csv' or ext == '.json' or ext == '.xml':
             # 텍스트/마크다운/CSV/JSON/XML 파일
@@ -873,8 +876,8 @@ def _extract_text_raw(source, ext: str) -> str:
                         if shape.has_text_frame:
                             text += shape.text_frame.text + "\n"
                 return text
-            except:
-                return ""
+            except Exception:
+                return None
 
         elif ext == '.pdf' and fitz:
             # PDF 파일 (PyMuPDF만 경로/스트림 인자가 달라 따로 분기한다)
@@ -888,8 +891,8 @@ def _extract_text_raw(source, ext: str) -> str:
                     for page in doc:
                         text += page.get_text() + "\n"
                 return text
-            except:
-                return ""
+            except Exception:
+                return None
 
         elif ext in ['.xlsx', '.xls'] and load_workbook:
             # Excel 파일
@@ -919,8 +922,8 @@ def _extract_text_raw(source, ext: str) -> str:
                                 text += str(cell.value) + " "
                             text += "\n"
                     return text
-            except:
-                return ""
+            except Exception:
+                return None
 
         elif ext == '.hwpx':
             # 한글 파일 (.hwpx, zip 기반) - Contents/section*.xml에서 <hp:t> 텍스트 추출
@@ -937,8 +940,8 @@ def _extract_text_raw(source, ext: str) -> str:
                             except ET.ParseError:
                                 pass
                 return text if text else ""
-            except:
-                return ""
+            except Exception:
+                return None
 
         elif ext == '.hwp':
             # 구버전 한글 파일 (OLE2 복합문서) - PrvText(미리보기 텍스트) 스트림에서 추출
@@ -950,14 +953,14 @@ def _extract_text_raw(source, ext: str) -> str:
                         return ""
                     data = ole.openstream('PrvText').read()
                 return data.decode('utf-16le', errors='ignore')
-            except:
-                return ""
+            except Exception:
+                return None
 
         else:
             return ""
 
     except Exception:
-        return ""
+        return None
 
 
 def _extract_text_worker(file_path_str: str):
@@ -1047,6 +1050,7 @@ class SearchWorker(QThread):
         self.cache_lock = threading.Lock()  # 캐시 동시 접근 보호
         self.skipped_large_files = 0  # 스킵된 대용량 파일 갯수
         self.skipped_files_list = []  # 스킵된 대용량파일 목록
+        self.extract_failed_files = []  # 텍스트 추출(파싱) 자체가 실패한 파일 목록
         self.stop_flag = False  # 검색 중단 플래그
         self._last_file_signal = 0.0  # file_processing 시그널 발행 간격 조절용
         self._found_lock = threading.Lock()  # _found_count 동시 접근 보호
@@ -1215,6 +1219,7 @@ class SearchWorker(QThread):
                                 if defer_index:
                                     self.extraction_urgent.emit(False)
                                 self.status.emit("⏹️ 검색 중단됨")
+                                self._log_extract_failures()
                                 self.finished.emit([])
                                 return
                             try:
@@ -1227,6 +1232,9 @@ class SearchWorker(QThread):
                             for path_str, key0, key1, text in entries:
                                 if key0 is None:
                                     continue
+                                if text is None:
+                                    self.extract_failed_files.append(path_str)
+                                    text = ""
                                 entry = (key0, key1, text)
                                 self.file_cache[path_str] = entry
                                 self.new_cache_entries[path_str] = entry
@@ -1279,6 +1287,7 @@ class SearchWorker(QThread):
                     self.extraction_urgent.emit(False)
                     if self.stop_flag:
                         self.status.emit("⏹️ 검색 중단됨")
+                        self._log_extract_failures()
                         self.finished.emit([])
                         return
             self.timing['extract'] = time.time() - t_phase_start
@@ -1315,8 +1324,8 @@ class SearchWorker(QThread):
                         # 실시간으로 각 결과 전송
                         for result in file_results:
                             self.result_found.emit(result)
-                    except:
-                        pass
+                    except Exception as e:
+                        logging.getLogger(__name__).warning(f"파일 청크 검색 실패: {e}")
 
                     # 중단 플래그 확인 (사용자가 중지 버튼을 눌렀거나, _report_found()가
                     # 결과 MAX_RESULTS 초과를 감지해 자동으로 세운 경우 둘 다 여기서 걸린다).
@@ -1357,6 +1366,7 @@ class SearchWorker(QThread):
                         )
                     else:
                         self.status.emit("⏹️ 검색 중단됨")
+                    self._log_extract_failures()
                     self.finished.emit(results)
                     return
             self.timing['search'] = time.time() - t_phase_start
@@ -1368,6 +1378,7 @@ class SearchWorker(QThread):
             self.timing['classify'] = time.time() - t_phase_start
 
             self.timing['total'] = time.time() - t_run_start
+            self._log_extract_failures()
             self.finished.emit(results)
             self.no_match_files_updated.emit(no_match_files)
             self.skipped_files_updated.emit(self.skipped_files_list)
@@ -1502,7 +1513,8 @@ class SearchWorker(QThread):
             try:
                 with zipfile.ZipFile(zip_path) as zf:
                     infos = zf.infolist()
-            except Exception:
+            except Exception as e:
+                logging.getLogger(__name__).warning(f"zip 파일 열기 실패({zip_str}): {e}")
                 continue
 
             pending = []
@@ -1562,6 +1574,9 @@ class SearchWorker(QThread):
             return cached[2]
 
         text = _extract_text_impl(file_path)
+        if text is None:
+            self.extract_failed_files.append(file_path_str)
+            text = ""
 
         with self.cache_lock:
             entry = (cache_key[0], cache_key[1], text)
@@ -1581,6 +1596,15 @@ class SearchWorker(QThread):
             if self._found_count >= self.MAX_RESULTS:
                 self._max_results_hit = True
                 self.stop_flag = True
+
+    def _log_extract_failures(self):
+        """텍스트 추출(파싱) 자체가 실패한 파일이 있으면 로그로 남긴다. 검색 결과에는
+        영향 없이 빈 문자열로 취급해 조용히 넘어가지만, 원인 추적을 위해 기록해둔다."""
+        if self.extract_failed_files:
+            logging.getLogger(__name__).warning(
+                f"텍스트 추출 실패 {len(self.extract_failed_files)}건: "
+                + ', '.join(self.extract_failed_files)
+            )
 
     def _search_file(self, file_path: Path, regex):
         """단일 파일 검색"""
@@ -1771,8 +1795,8 @@ class SearchWorker(QThread):
                             'inner_name': inner_name
                         })
                         self._report_found()
-        except:
-            pass
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"zip 파일 검색 실패({file_path}): {e}")
 
         return results
 
@@ -1787,7 +1811,11 @@ class SearchWorker(QThread):
 
         try:
             text = _extract_text_from_bytes(zf.read(info.filename), ext)
-        except:
+        except Exception:
+            text = None
+
+        if text is None:
+            self.extract_failed_files.append(cache_key_str)
             text = ""
 
         with self.cache_lock:
