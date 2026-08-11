@@ -2229,7 +2229,8 @@ class FSearchGUI(QMainWindow):
                 # 통계 표시 업데이트
                 self.update_excluded_stats_display()
 
-                self._set_status(f"✅ 제외 폴더 추가됨: {folder_name}")
+                if not getattr(self, '_max_results_warning_active', False):
+                    self.status_label.setText(f"✅ 제외 폴더 추가됨: {folder_name}")
             else:
                 QMessageBox.information(self, "알림", "이미 추가된 폴더입니다.")
 
@@ -2247,7 +2248,7 @@ class FSearchGUI(QMainWindow):
         2,000개 파일을 처리하던 도중 닫아도 프로세스가 눈에 안 보이는 채로 7초간 더 실행됨."""
         if self.is_searching and self.search_worker and self.search_worker.isRunning():
             self.search_worker.stop_flag = True
-            self._set_status("⏹️ 종료 중... 검색을 정리하고 있습니다.")
+            self.status_label.setText("⏹️ 종료 중... 검색을 정리하고 있습니다.")
             # cancel_futures=True 덕분에 대부분 수 초 안에 끝난다(중지 버튼 실측 1.56초).
             # 그래도 안 끝나면 무한정 기다리지 않고 진행한다.
             if not self.search_worker.wait(5000):
@@ -2273,7 +2274,7 @@ class FSearchGUI(QMainWindow):
             if self.search_worker:
                 self.search_worker.stop_flag = True
             # 상태 메시지 및 버튼 즉시 복원
-            self._set_status("⏹️ 검색 중단됨")
+            self.status_label.setText("⏹️ 검색 중단됨")
             self.search_btn.setText("🔍 검색")
             self.search_btn.setStyleSheet("QPushButton { }")  # 기본 스타일 복원
             return
@@ -2452,15 +2453,6 @@ class FSearchGUI(QMainWindow):
             self.status_label.setStyleSheet("")
             self._max_results_warning_active = False
 
-    def _set_status(self, text):
-        """상태표시바 텍스트를 갱신한다. 결과 초과 경고가 떠 있는 동안은 검색어를
-        바꾸기 전까지(on_keyword_changed) 다른 이벤트가 이 문구를 덮어쓰지 못하게
-        여기서 막는다. 경고 자체를 표시/해제하는 지점(search_finished)은 이 판단을
-        내리는 쪽이므로 이 헬퍼를 거치지 않고 status_label을 직접 설정한다."""
-        if getattr(self, '_max_results_warning_active', False):
-            return
-        self.status_label.setText(text)
-
     def update_progress(self, value):
         """진행바 업데이트"""
         self.progress_bar.setValue(value)
@@ -2562,11 +2554,11 @@ class FSearchGUI(QMainWindow):
 
     def update_status(self, status):
         """상태 메시지 업데이트"""
-        self._set_status(status)
+        self.status_label.setText(status)
 
     def update_current_file(self, file_info):
         """현재 처리 중인 파일 표시"""
-        self._set_status(f"검색 중: {file_info}")
+        self.status_label.setText(f"검색 중: {file_info}")
 
     def update_no_match_files(self, no_match_files):
         """검색어 미포함 파일 누적 업데이트"""
@@ -2815,7 +2807,7 @@ class FSearchGUI(QMainWindow):
         self.search_btn.setText("🔍 검색")
         self.search_btn.setStyleSheet("QPushButton { }")  # 기본 스타일 복원
         QMessageBox.critical(self, "오류", error)
-        self._set_status("오류 발생")
+        self.status_label.setText("오류 발생")
         # 로깅
         self.logger.error(f"검색 오류: {error}")
 
@@ -2899,8 +2891,9 @@ class FSearchGUI(QMainWindow):
                 if widget and isinstance(widget, QLabel):
                     widget.setToolTip(preview_text)
 
-            # 상태 바에도 메시지 표시
-            self._set_status("📝 본문에 검색어 없음 (파일명만 일치)")
+            # 상태 바에도 메시지 표시 (결과 초과 경고가 떠 있으면 덮어쓰지 않는다)
+            if not getattr(self, '_max_results_warning_active', False):
+                self.status_label.setText("📝 본문에 검색어 없음 (파일명만 일치)")
             return
 
         # matched_lines가 있으면 미리보기 표시
@@ -2922,19 +2915,22 @@ class FSearchGUI(QMainWindow):
                 if widget and isinstance(widget, QLabel):
                     widget.setToolTip(preview_text)
 
-            # 상태 바에도 미리보기 표시 (첫 번째 문장)
-            if matched_lines and len(matched_lines) > 0:
+            # 상태 바에도 미리보기 표시 (첫 번째 문장, 결과 초과 경고가 떠 있으면 덮어쓰지 않는다)
+            if matched_lines and len(matched_lines) > 0 and not getattr(self, '_max_results_warning_active', False):
                 status_msg = matched_lines[0]
                 if len(status_msg) > 100:
                     status_msg = status_msg[:100] + "..."
-                self._set_status(f"📝 {status_msg}")
+                self.status_label.setText(f"📝 {status_msg}")
 
     def open_file(self, row, column):
         """파일 또는 폴더 열기 (더블클릭 시 호출 - 검색 중/완료 모두 처리)"""
+        # 결과 초과 경고가 떠 있는 동안은 검색어를 바꾸기 전까지 상태바를 건드리지 않는다
+        allow_status = not getattr(self, '_max_results_warning_active', False)
         try:
             # 행 번호 범위 검증
             if row < 0 or row >= self.table.rowCount():
-                self._set_status("❌ 유효하지 않은 행입니다")
+                if allow_status:
+                    self.status_label.setText("❌ 유효하지 않은 행입니다")
                 return
 
             file_path = None
@@ -2966,19 +2962,22 @@ class FSearchGUI(QMainWindow):
 
             # 파일 경로 검증
             if not file_path or not isinstance(file_path, str):
-                self._set_status("❌ 파일 경로 정보가 없습니다")
+                if allow_status:
+                    self.status_label.setText("❌ 파일 경로 정보가 없습니다")
                 return
 
             # 문자열 정리
             file_path = str(file_path).strip()
             if not file_path:
-                self._set_status("❌ 파일 경로가 비어있습니다")
+                if allow_status:
+                    self.status_label.setText("❌ 파일 경로가 비어있습니다")
                 return
 
             # 경로 존재 여부 확인
             path_obj = Path(file_path)
             if not path_obj.exists():
-                self._set_status(f"❌ 파일을 찾을 수 없습니다: {file_path}")
+                if allow_status:
+                    self.status_label.setText(f"❌ 파일을 찾을 수 없습니다: {file_path}")
                 return
 
             # 파일 실행
@@ -2990,7 +2989,8 @@ class FSearchGUI(QMainWindow):
                 subprocess.Popen(['xdg-open', file_path])
 
             filename = path_obj.name
-            self._set_status(f"✅ 파일 열음: {filename}")
+            if allow_status:
+                self.status_label.setText(f"✅ 파일 열음: {filename}")
 
             # 로깅
             if hasattr(self, 'logger'):
@@ -2998,7 +2998,8 @@ class FSearchGUI(QMainWindow):
 
         except Exception as e:
             error_msg = f"파일 실행 오류: {str(e)}"
-            self._set_status(f"❌ {error_msg}")
+            if allow_status:
+                self.status_label.setText(f"❌ {error_msg}")
             if hasattr(self, 'logger'):
                 self.logger.error(error_msg)
 
