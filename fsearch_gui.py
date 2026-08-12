@@ -27,7 +27,7 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLayout,
     QLabel, QLineEdit, QPushButton, QTextEdit, QFileDialog, QCheckBox,
     QSpinBox, QProgressBar, QComboBox, QTabWidget, QTableWidget, QTableWidgetItem,
-    QSplitter, QMessageBox, QStyledItemDelegate, QFileIconProvider
+    QSplitter, QMessageBox, QStyledItemDelegate, QFileIconProvider, QMenu
 )
 from PyQt5.QtCore import (
     Qt, QThread, pyqtSignal, QTimer, QRect, QObject, QEvent, QSize, QPoint,
@@ -2163,6 +2163,8 @@ class FSearchGUI(QMainWindow):
         self.table.setMouseTracking(True)  # ✅ 마우스 트래킹 활성화 (호버 감지용)
         self.table.cellDoubleClicked.connect(self.open_file)  # 더블클릭 시 파일 실행 (QLabel/Item 모두 처리)
         self.table.cellEntered.connect(self.on_table_cell_entered)  # 마우스 호버 시 미리보기 표시 (QLabel 포함)
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self.show_table_context_menu)  # 우클릭 메뉴 (탐색기에서 위치 열기)
         self.table.horizontalHeader().setSortIndicatorShown(True)
         self.table.horizontalHeader().sectionClicked.connect(self.on_header_clicked)
 
@@ -3029,6 +3031,62 @@ class FSearchGUI(QMainWindow):
             self._set_status(f"❌ {error_msg}")
             if hasattr(self, 'logger'):
                 self.logger.error(error_msg)
+
+    def _resolve_row_file_path(self, row):
+        """행 번호로부터 파일 경로를 찾는다 (open_file과 동일한 다단계 폴백:
+        self.results → 크기 셀 UserRole → 파일명/경로 셀 QLabel property)"""
+        if row < 0 or row >= self.table.rowCount():
+            return None
+
+        file_path = None
+        if row < len(self.results):
+            result = self.results[row]
+            file_path = result.get('full_path') or result.get('path')
+
+        if not file_path:
+            item = self.table.item(row, 2)
+            if item:
+                file_path = item.data(Qt.UserRole)
+
+            if not file_path:
+                widget = self.table.cellWidget(row, 0)
+                if widget and isinstance(widget, QLabel):
+                    file_path = widget.property("file_path")
+
+                if not file_path:
+                    widget = self.table.cellWidget(row, 1)
+                    if widget and isinstance(widget, QLabel):
+                        file_path = widget.property("file_path")
+
+        if not file_path or not isinstance(file_path, str):
+            return None
+
+        return str(file_path).strip() or None
+
+    def show_table_context_menu(self, pos):
+        """결과 테이블 우클릭 메뉴 - 탐색기에서 파일 위치 열기"""
+        row = self.table.rowAt(pos.y())
+        file_path = self._resolve_row_file_path(row)
+        if not file_path or not Path(file_path).exists():
+            return
+
+        menu = QMenu(self)
+        action = menu.addAction("📂 파일 위치 열기")
+        action.triggered.connect(lambda: self._show_in_explorer(file_path))
+        menu.exec_(self.table.viewport().mapToGlobal(pos))
+
+    def _show_in_explorer(self, file_path):
+        """탐색기를 열어 해당 파일을 선택된 상태로 보여준다 (zip 내부 파일은 zip 자체를 선택)"""
+        try:
+            if sys.platform == 'win32':
+                subprocess.Popen(f'explorer /select,"{file_path}"')
+            else:
+                subprocess.Popen(['xdg-open', str(Path(file_path).parent)])
+            self._set_status(f"📂 탐색기에서 위치 열음: {Path(file_path).name}")
+        except Exception as e:
+            self._set_status(f"❌ 탐색기 열기 실패: {e}")
+            if hasattr(self, 'logger'):
+                self.logger.error(f"탐색기 열기 실패({file_path}): {e}")
 
     def calculate_relevance_score(self, result):
         """파일의 업무 연관도 점수 계산"""
