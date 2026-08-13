@@ -412,6 +412,38 @@ def _format_remaining(seconds: float) -> str:
     return f"{sec}초"
 
 
+def _parse_keyword_query(keyword: str) -> List[List[str]]:
+    """검색어를 OR로 구분된 AND-항 그룹들로 파싱한다.
+    공백은 AND, 대문자 "OR" 토큰만 명시적 OR 구분자로 인식한다(소문자 "or"는 검색어
+    그대로 취급). 예: "네이버 회의록 OR 카카오" -> [["네이버", "회의록"], ["카카오"]]
+    반환되는 각 항은 매칭에 바로 쓸 수 있도록 소문자로 변환되어 있다."""
+    groups = []
+    current = []
+    for tok in keyword.split():
+        if tok == 'OR':
+            if current:
+                groups.append(current)
+                current = []
+        else:
+            current.append(tok.lower())
+    if current:
+        groups.append(current)
+    if not groups:
+        groups = [[keyword.strip().lower()]]
+    return groups
+
+
+def _query_matches(query: List[List[str]], text_lower: str) -> bool:
+    """OR-그룹 중 하나라도 모든 AND-항이 text_lower에 포함되면 True"""
+    return any(all(term in text_lower for term in group) for group in query)
+
+
+def _query_any_term_in(query: List[List[str]], text_lower: str) -> bool:
+    """쿼리를 구성하는 개별 항 중 하나라도 text_lower에 있으면 True
+    (라인 단위 미리보기/하이라이트처럼 AND 전체 충족 여부가 아니라 부분 일치 표시가 필요할 때 사용)"""
+    return any(term in text_lower for group in query for term in group)
+
+
 def _can_use_index(keyword: str) -> bool:
     """이 키워드를 trigram 인덱스로 안전하고 빠르게 찾을 수 있는지 판단.
 
@@ -1032,9 +1064,8 @@ class SearchWorker(QThread):
     def __init__(self, keyword, path, ignore_dirs, name_only, content_only, use_regex, max_workers, skip_large_files=False):
         super().__init__()
         self.keyword = keyword
-        self.keyword_lower = keyword.lower()
-        # 대소문자무시 사전확인용(정규식 검색 모드가 아닐 때도 lower() 복사본 없이 빠르게 존재 여부 판단)
-        self.literal_pattern = re.compile(re.escape(keyword), re.IGNORECASE)
+        # OR로 구분된 AND-항 그룹들. 정규식 모드에서는 self.keyword를 그대로 패턴으로 쓰므로 안 쓴다.
+        self.keyword_query = _parse_keyword_query(keyword)
         self.path = path
         self.ignore_dirs = set(ignore_dirs)
         self.name_only = name_only
@@ -1113,10 +1144,12 @@ class SearchWorker(QThread):
                         self.finished.emit([])
                         return
 
+                is_single_term = len(self.keyword_query) == 1 and len(self.keyword_query[0]) == 1
                 if (self.use_regex or not self.text_cache.fts_available
-                        or not _can_use_index(self.keyword)):
-                    # 정규식은 인덱스로 평가할 수 없고, 짧거나 비ASCII 대소문자가 섞인 키워드는
-                    # 인덱스 결과가 파이썬 매칭과 달라질 수 있어 기존처럼 본문 전체를 로드한다
+                        or not is_single_term or not _can_use_index(self.keyword)):
+                    # 정규식과 AND/OR 다중 키워드는 인덱스로 평가할 수 없고, 짧거나 비ASCII
+                    # 대소문자가 섞인 키워드는 인덱스 결과가 파이썬 매칭과 달라질 수 있어
+                    # 기존처럼 본문 전체를 로드한다
                     # (SQLite 버전이 낮아 인덱스를 만들지 못한 경우에도 이 경로를 탄다)
                     self.file_cache = self.text_cache.load_for_prefix(self.path)
                 else:
@@ -1674,10 +1707,12 @@ class SearchWorker(QThread):
                             if len(matched_lines) < 4:
                                 matched_lines.append(line.strip())
                 else:
-                    # 정규식 엔진의 대소문자무시 매칭으로 사전확인(lower() 복사본 생성 없이 존재 여부만 빠르게 판단)
-                    if self.literal_pattern.search(text):
+                    # OR-그룹 중 하나라도 AND-항이 전부 있는지 문서 전체 기준으로 먼저 확인
+                    if _query_matches(self.keyword_query, text.lower()):
                         for line in text.split('\n'):
-                            if self.keyword_lower in line.lower():
+                            # 라인 단위로는 AND 전체 충족이 아니라 쿼리 항 중 하나라도 있으면
+                            # 미리보기/카운트 대상으로 삼는다(AND 항들이 서로 다른 줄에 있을 수 있음)
+                            if _query_any_term_in(self.keyword_query, line.lower()):
                                 total_match_count += 1
                                 content_match_count += 1
                                 # 매칭된 라인 저장 (최대 4줄)
@@ -1773,9 +1808,9 @@ class SearchWorker(QThread):
                                         if len(matched_lines) < 4:
                                             matched_lines.append(line.strip())
                             else:
-                                if self.literal_pattern.search(text):
+                                if _query_matches(self.keyword_query, text.lower()):
                                     for line in text.split('\n'):
-                                        if self.keyword_lower in line.lower():
+                                        if _query_any_term_in(self.keyword_query, line.lower()):
                                             match_count += 1
                                             if len(matched_lines) < 4:
                                                 matched_lines.append(line.strip())
@@ -1830,7 +1865,7 @@ class SearchWorker(QThread):
         if regex:
             return regex.search(text) is not None
         else:
-            return self.keyword_lower in text.lower()
+            return _query_matches(self.keyword_query, text.lower())
 
     def _is_binary(self, path: Path) -> bool:
         """바이너리 파일 확인"""
@@ -1988,6 +2023,10 @@ class FSearchGUI(QMainWindow):
         self.keyword_input = QComboBox()
         self.keyword_input.setEditable(True)
         self.keyword_input.lineEdit().setPlaceholderText("검색할 키워드 입력...")
+        self.keyword_input.lineEdit().setToolTip(
+            "공백으로 구분하면 AND 조건(예: 네이버 회의록)\n"
+            "OR을 명시하면 OR 조건(예: 네이버 OR 카카오)"
+        )
         self.keyword_input.lineEdit().returnPressed.connect(self.search)
         self.keyword_input.lineEdit().textChanged.connect(self.on_keyword_changed)
         self.keyword_input.setMaximumHeight(25)
@@ -2637,7 +2676,7 @@ class FSearchGUI(QMainWindow):
         # 검색 단어를 포함하는 셀을 굵게 표시 + 빨간색
         if hasattr(self, 'current_keyword'):
             keyword = self.current_keyword
-            keyword_lower = keyword.lower() if not self.current_regex else keyword
+            keyword_query = None if self.current_regex else _parse_keyword_query(keyword)
 
             for row in range(self.table.rowCount()):
                 # 파일명 (컬럼 0)과 경로 (컬럼 1) 체크
@@ -2654,7 +2693,7 @@ class FSearchGUI(QMainWindow):
                             except:
                                 pass
                         else:
-                            if keyword_lower in text.lower():
+                            if _query_matches(keyword_query, text.lower()):
                                 found = True
 
                         # 찾으면 bold 글꼴 + 빨간색 적용
@@ -2795,9 +2834,12 @@ class FSearchGUI(QMainWindow):
             except:
                 return text
         else:
-            # 일반 문자열 검색 (대소문자 무시)
+            # 일반 문자열 검색 (대소문자 무시, AND/OR 다중 키워드는 항별로 각각 강조)
             # 모든 일치 부분을 굵게 + 빨간색으로 표기
-            pattern = re.compile(f'({re.escape(keyword)})', re.IGNORECASE)
+            terms = sorted({t for group in _parse_keyword_query(keyword) for t in group}, key=len, reverse=True)
+            if not terms:
+                return text
+            pattern = re.compile('(' + '|'.join(re.escape(t) for t in terms) + ')', re.IGNORECASE)
             return pattern.sub(r'<span style="color: red; font-weight: bold;">\1</span>', text)
 
     def _prewarm_icon_cache(self):
@@ -3098,8 +3140,13 @@ class FSearchGUI(QMainWindow):
         score = 0
 
         # 1. 파일명에 검색어 포함: 최우선
-        if keyword and keyword.lower() in filename:
-            score += 1000
+        if keyword:
+            use_regex = getattr(self, 'current_regex', False)
+            if use_regex:
+                if keyword.lower() in filename:
+                    score += 1000
+            elif _query_matches(_parse_keyword_query(keyword), filename):
+                score += 1000
 
         # 2. 문서 타입 우선순위
         doc_extensions = {'.doc': 50, '.docx': 50, '.pdf': 40, '.txt': 30,
