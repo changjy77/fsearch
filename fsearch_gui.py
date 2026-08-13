@@ -2175,6 +2175,47 @@ class FSearchGUI(QMainWindow):
         self.status_label.setMaximumHeight(20)
         layout.addWidget(self.status_label)
 
+        # ===== 결과 필터 (확장자/날짜) =====
+        # self.results 자체는 건드리지 않고 표시(테이블/텍스트 탭)만 좁힌다.
+        # 확장자 체크박스(검색할 때마다 새로 구성)와 날짜/초기화(고정)를 같은 FlowLayout
+        # 한 줄에 순서대로 배치해, 마지막 체크박스 바로 옆에 날짜 필터가 붙어 보이게 한다.
+        # 체크박스는 검색마다 없앴다 새로 만들지만 날짜/초기화 위젯은 그대로 두고 그때마다
+        # 맨 끝으로 다시 옮겨 붙인다(_rebuild_extension_filter 참고).
+        filter_container = QWidget()
+        self.filter_ext_layout = FlowLayout(filter_container, spacing=5)
+        self.filter_ext_layout.addWidget(QLabel("확장자:"))
+        self.filter_ext_checkboxes = {}  # 확장자 -> QCheckBox (검색할 때마다 새로 구성)
+
+        # 날짜를 한 글자씩 입력할 때마다 필터를 바로 적용하면(특히 결과가 많을 때) 매
+        # 키 입력마다 다시 그리느라 입력이 밀리므로, 타이핑이 잠깐 멈췄을 때 한 번만
+        # 적용되도록 디바운스한다.
+        self._filter_debounce_timer = QTimer(self)
+        self._filter_debounce_timer.setSingleShot(True)
+        self._filter_debounce_timer.timeout.connect(self._apply_filters)
+
+        self.filter_date_from = QLineEdit()
+        self.filter_date_from.setPlaceholderText("YYYY-MM-DD")
+        self.filter_date_from.setMaximumWidth(90)
+        self.filter_date_from.textChanged.connect(self._schedule_apply_filters)
+        self.filter_date_to = QLineEdit()
+        self.filter_date_to.setPlaceholderText("YYYY-MM-DD")
+        self.filter_date_to.setMaximumWidth(90)
+        self.filter_date_to.textChanged.connect(self._schedule_apply_filters)
+        filter_reset_btn = QPushButton("필터 초기화")
+        filter_reset_btn.setMaximumHeight(25)
+        filter_reset_btn.clicked.connect(self.reset_filters)
+        # 체크박스 뒤에 이어 붙일 고정 위젯들(순서대로) - 매 검색마다 맨 끝으로 재배치된다
+        self._filter_trailing_widgets = [
+            QLabel("날짜:"), self.filter_date_from, QLabel("~"),
+            self.filter_date_to, filter_reset_btn,
+        ]
+        for w in self._filter_trailing_widgets:
+            self.filter_ext_layout.addWidget(w)
+
+        # 확장자가 많아 FlowLayout이 여러 줄로 줄바꿈될 수 있으므로 높이를 제한하지 않는다
+        # (options2_container와 동일한 이유)
+        layout.addWidget(filter_container)
+
         # ===== 탭: 결과 표시 =====
         self.tabs = QTabWidget()
 
@@ -2706,67 +2747,15 @@ class FSearchGUI(QMainWindow):
         # 검색 단어수로 정렬
         self.sort_results_by_match_count()
 
-        # 컬럼 너비 자동 조정
-        self.table.resizeColumnsToContents()
+        # 필터 UI를 새 결과의 확장자 집합으로 재구성(전부 체크된 상태로 시작)하고,
+        # 테이블/텍스트 탭을 그린다(날짜 필터는 이전 검색값을 유지한 채 적용됨)
+        self._rebuild_extension_filter()
+        self._render_results()
 
-        # 텍스트 탭 업데이트 (검색어 굵게 표기)
-        text_output = "<html><body><pre>검색 결과:\n" + "="*100 + "\n\n"
-        shown_files = set()
-
-        # 검색어 준비
-        keyword = getattr(self, 'current_keyword', '')
-        use_regex = getattr(self, 'current_regex', False)
-
-        for result in results:
-            # 각 파일당 한 번씩만 정보 표시
-            file_path = result['full_path']
-            if file_path not in shown_files:
-                shown_files.add(file_path)
-
-                size = result['size']
-                if size < 1024:
-                    size_str = f"{size} B"
-                elif size < 1024 * 1024:
-                    size_str = f"{size / 1024:.1f} KB"
-                else:
-                    size_str = f"{size / (1024 * 1024):.1f} MB"
-
-                # 파일명에서 검색어를 굵게 표기
-                filename = result['filename']
-                highlighted_filename = self._highlight_keyword(filename, keyword, use_regex)
-
-                # 경로에서 검색어를 굵게 표기
-                highlighted_path = self._highlight_keyword(file_path, keyword, use_regex)
-
-                text_output += f"[{highlighted_filename}]\n"
-                text_output += f"  경로: {highlighted_path}\n"
-                text_output += f"  크기: {size_str}\n"
-                text_output += f"  수정일: {result['modified']}\n"
-                text_output += f"  검색 단어수: {result['match_count']}\n"
-
-                # 매칭된 라인 출력 (최대 3줄)
-                matched_lines = result.get('matched_lines', [])
-                if matched_lines:
-                    text_output += f"  검색어 포함 문장:\n"
-                    for idx, line in enumerate(matched_lines, 1):
-                        # 검색어 강조
-                        highlighted_line = self._highlight_keyword(line, keyword, use_regex)
-                        # 긴 라인은 줄임
-                        if len(highlighted_line) > 120:
-                            highlighted_line = highlighted_line[:120] + "..."
-                        text_output += f"    {idx}. {highlighted_line}\n"
-
-                text_output += "\n"
-
-        text_output += "</pre></body></html>"
-        self.text_output.setHtml(text_output)
-
-        # 파일별 검색 결과 개수 계산
+        # 파일별 검색 결과 개수 계산 (필터와 무관하게 이번 검색의 전체 결과 기준)
         file_counts = defaultdict(int)
         for result in results:
             file_counts[result['full_path']] += 1
-
-        self.result_count.setText(f"결과: {len(results)}개 (파일: {len(file_counts)}개)")
 
         # 읽은 파일 누적 (검색 시작 시 초기화되고 검색당 한 번만 호출되며 키는 이미 유일하므로 중복 체크 불필요)
         self.read_files.extend(file_counts.keys())
@@ -2820,6 +2809,174 @@ class FSearchGUI(QMainWindow):
                 f"75%:{t.get('checkpoint_75pct', 0):.3f}s "
                 f"100%:{t.get('checkpoint_100pct', 0):.3f}s"
             )
+
+    def _rebuild_extension_filter(self):
+        """새 검색 결과의 확장자 집합으로 필터 체크박스를 다시 만든다(전부 체크된 상태로 시작).
+        날짜/초기화 위젯은 없애지 않고 체크박스 뒤로 다시 옮겨 붙여, 항상 마지막
+        체크박스 바로 옆에 이어지도록 한다."""
+        for cb in self.filter_ext_checkboxes.values():
+            cb.setParent(None)
+        self.filter_ext_checkboxes = {}
+
+        for w in self._filter_trailing_widgets:
+            self.filter_ext_layout.removeWidget(w)
+
+        extensions = sorted({r.get('extension', '') or '(확장자 없음)' for r in self.results})
+        for ext in extensions:
+            cb = QCheckBox(ext)
+            cb.setChecked(True)
+            cb.setMaximumHeight(25)
+            cb.stateChanged.connect(self._apply_filters)
+            self.filter_ext_layout.addWidget(cb)
+            self.filter_ext_checkboxes[ext] = cb
+
+        for w in self._filter_trailing_widgets:
+            self.filter_ext_layout.addWidget(w)
+
+    def reset_filters(self):
+        """확장자 필터를 전부 체크, 날짜 필터를 비운 뒤 다시 그린다"""
+        for cb in self.filter_ext_checkboxes.values():
+            cb.blockSignals(True)
+            cb.setChecked(True)
+            cb.blockSignals(False)
+        self.filter_date_from.blockSignals(True)
+        self.filter_date_from.clear()
+        self.filter_date_from.blockSignals(False)
+        self.filter_date_to.blockSignals(True)
+        self.filter_date_to.clear()
+        self.filter_date_to.blockSignals(False)
+        self._filter_debounce_timer.stop()
+        self._apply_filters()
+
+    @staticmethod
+    def _parse_filter_date(text):
+        """YYYY-MM-DD 형식이 아니거나 비어 있으면 None(필터 미적용)"""
+        text = text.strip()
+        if not text:
+            return None
+        try:
+            return datetime.strptime(text, '%Y-%m-%d')
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _parse_result_date(text):
+        """result['modified']('%Y-%m-%d %H:%M:%S' 또는 stat 실패 시 'Unknown')를 파싱"""
+        try:
+            return datetime.strptime(text, '%Y-%m-%d %H:%M:%S')
+        except (ValueError, TypeError):
+            return None
+
+    def _result_passes_filters(self, result) -> bool:
+        """확장자/날짜 필터를 모두 통과하면 True"""
+        ext = result.get('extension', '') or '(확장자 없음)'
+        cb = self.filter_ext_checkboxes.get(ext)
+        if cb and not cb.isChecked():
+            return False
+
+        date_from = self._parse_filter_date(self.filter_date_from.text())
+        date_to = self._parse_filter_date(self.filter_date_to.text())
+        if date_from or date_to:
+            modified = self._parse_result_date(result.get('modified', ''))
+            if modified is None:
+                return False  # 날짜를 알 수 없는 결과는 날짜 필터가 걸려 있으면 제외
+            if date_from and modified.date() < date_from.date():
+                return False
+            if date_to and modified.date() > date_to.date():
+                return False
+
+        return True
+
+    def _schedule_apply_filters(self):
+        """날짜 입력칸에서 타이핑이 잠깐(300ms) 멈추면 그때 한 번만 필터를 적용한다
+        (매 키 입력마다 적용하면 결과가 많을 때 입력이 밀리는 것처럼 느껴진다)"""
+        self._filter_debounce_timer.start(300)
+
+    def _render_results(self):
+        """self.results 전체로 테이블 행을 새로 만든다(위젯을 새로 생성하는 무거운 동작).
+        행 순서 자체가 바뀔 때만(검색 완료 직후, 헤더 클릭 정렬 후) 호출한다.
+        다 그린 뒤 현재 필터 상태를 이어서 반영한다(_apply_filters).
+        결과가 수천 건일 때 필터를 바꿀 때마다 이 함수를 다시 부르면 매번 위젯을 전부
+        새로 만들어 화면이 멈춘 것처럼 느려지므로, 필터 토글은 이 함수를 거치지 않고
+        _apply_filters가 행을 숨기는 것만으로 처리한다."""
+        self.table.setRowCount(0)
+        for result in self.results:
+            self.add_result_row(result)
+        self.table.resizeColumnsToContents()
+        self._apply_filters()
+
+    def _apply_filters(self):
+        """확장자/날짜 필터를 반영한다. 테이블은 이미 그려진 행을 숨기고 보이기만 해서
+        (setRowHidden - 위젯을 새로 만들지 않아 가볍다) 반영하고, 텍스트 탭/결과 수는
+        위젯 생성이 없는 가벼운 작업이라 필터된 목록으로 매번 다시 그려도 무리 없다."""
+        filtered = []
+        for row, result in enumerate(self.results):
+            passes = self._result_passes_filters(result)
+            self.table.setRowHidden(row, not passes)
+            if passes:
+                filtered.append(result)
+        self._render_text_tab(filtered)
+
+    def _render_text_tab(self, results):
+        """텍스트 탭과 결과 수 표시를 그린다(위젯 생성이 없어 필터를 토글할 때마다 불러도 가볍다)"""
+        # 텍스트 탭 업데이트 (검색어 굵게 표기)
+        text_output = "<html><body><pre>검색 결과:\n" + "="*100 + "\n\n"
+        shown_files = set()
+
+        # 검색어 준비
+        keyword = getattr(self, 'current_keyword', '')
+        use_regex = getattr(self, 'current_regex', False)
+
+        for result in results:
+            # 각 파일당 한 번씩만 정보 표시
+            file_path = result['full_path']
+            if file_path not in shown_files:
+                shown_files.add(file_path)
+
+                size = result['size']
+                if size < 1024:
+                    size_str = f"{size} B"
+                elif size < 1024 * 1024:
+                    size_str = f"{size / 1024:.1f} KB"
+                else:
+                    size_str = f"{size / (1024 * 1024):.1f} MB"
+
+                # 파일명에서 검색어를 굵게 표기
+                filename = result['filename']
+                highlighted_filename = self._highlight_keyword(filename, keyword, use_regex)
+
+                # 경로에서 검색어를 굵게 표기
+                highlighted_path = self._highlight_keyword(file_path, keyword, use_regex)
+
+                text_output += f"[{highlighted_filename}]\n"
+                text_output += f"  경로: {highlighted_path}\n"
+                text_output += f"  크기: {size_str}\n"
+                text_output += f"  수정일: {result['modified']}\n"
+                text_output += f"  검색 단어수: {result['match_count']}\n"
+
+                # 매칭된 라인 출력 (최대 3줄)
+                matched_lines = result.get('matched_lines', [])
+                if matched_lines:
+                    text_output += f"  검색어 포함 문장:\n"
+                    for idx, line in enumerate(matched_lines, 1):
+                        # 검색어 강조
+                        highlighted_line = self._highlight_keyword(line, keyword, use_regex)
+                        # 긴 라인은 줄임
+                        if len(highlighted_line) > 120:
+                            highlighted_line = highlighted_line[:120] + "..."
+                        text_output += f"    {idx}. {highlighted_line}\n"
+
+                text_output += "\n"
+
+        text_output += "</pre></body></html>"
+        self.text_output.setHtml(text_output)
+
+        # 파일별 표시 결과 개수 계산(필터가 적용된 현재 표시 기준)
+        file_counts = defaultdict(int)
+        for result in results:
+            file_counts[result['full_path']] += 1
+
+        self.result_count.setText(f"결과: {len(results)}개 (파일: {len(file_counts)}개)")
 
     def _highlight_keyword(self, text: str, keyword: str, use_regex: bool) -> str:
         """텍스트에서 검색어를 HTML 굵게 + 빨간색으로 표기"""
@@ -3193,25 +3350,17 @@ class FSearchGUI(QMainWindow):
         key_fn = self._HEADER_SORT_KEYS[column]
         self.results.sort(key=lambda r: key_fn(self, r), reverse=not self.sort_ascending)
 
-        self.table.setRowCount(0)
-        for result in self.results:
-            self.add_result_row(result)
+        # 정렬로 행 순서 자체가 바뀌므로 테이블을 다시 그린다(그 안에서 필터도 다시 반영됨)
+        self._render_results()
 
         order = Qt.AscendingOrder if self.sort_ascending else Qt.DescendingOrder
         self.table.horizontalHeader().setSortIndicator(column, order)
 
     def sort_results_by_match_count(self):
-        """업무 연관도 기준으로 정렬하고 테이블 재구성"""
+        """업무 연관도 기준으로 self.results를 정렬한다(테이블 반영은 호출부의 _render_results가 담당)"""
         self.sort_column = None  # 새 검색 결과이므로 이전 헤더 클릭 정렬 기준을 초기화
         # self.results를 연관도 점수 기준 내림차순으로 정렬
         self.results.sort(key=lambda x: self.calculate_relevance_score(x), reverse=True)
-
-        # 테이블 초기화
-        self.table.setRowCount(0)
-
-        # 정렬된 results로 테이블 재구성
-        for result in self.results:
-            self.add_result_row(result)
 
     def export_to_excel(self):
         """현재 결과 테이블에 표시된 내용을 엑셀 파일로 내보내기"""
