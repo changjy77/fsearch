@@ -2902,8 +2902,22 @@ class FSearchGUI(QMainWindow):
         self.table.setRowCount(0)
         for result in self.results:
             self.add_result_row(result)
-        self.table.resizeColumnsToContents()
+        self._fit_columns_to_viewport()
         self._apply_filters()
+
+    def _fit_columns_to_viewport(self):
+        """파일명/경로가 각각 화면 폭의 1/3씩, 나머지(크기/수정 날짜/검색 단어수)가
+        남은 1/3을 3등분해서 차지하도록 컬럼 너비를 고정한다(내용 길이와 무관하게
+        항상 이 비율. 잘린 파일명/경로는 툴팁으로 전체 내용을 볼 수 있다)."""
+        total = self.table.viewport().width()
+        third = total // 3
+        remaining_third = total - 2 * third  # 3으로 안 나눠떨어지는 오차를 마지막 1/3에 몰아준다
+        small_col = remaining_third // 3
+        self.table.setColumnWidth(0, third)  # 파일명
+        self.table.setColumnWidth(1, third)  # 경로
+        self.table.setColumnWidth(2, small_col)  # 크기
+        self.table.setColumnWidth(3, small_col)  # 수정 날짜
+        self.table.setColumnWidth(4, remaining_third - 2 * small_col)  # 검색 단어수(나머지 오차 흡수)
 
     def _apply_filters(self):
         """확장자/날짜 필터를 반영한다. 테이블은 이미 그려진 행을 숨기고 보이기만 해서
