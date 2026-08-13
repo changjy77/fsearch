@@ -1166,15 +1166,23 @@ class SearchWorker(QThread):
 
             # 실제로 더 이상 존재하지 않는 파일의 캐시 항목 정리
             # (zip경로!내부파일명 형태는 zip 파일 자체의 존재 여부로 판단)
+            # exists() 호출을 스레드풀로 병렬화한다 - 캐시가 수만 건이면 순차 확인만으로도
+            # 수 초가 걸릴 수 있고(특히 네트워크 드라이브), 각 호출은 I/O 대기라 GIL이
+            # 풀려 스레드 병렬화 효과가 그대로 난다(검색 단계와 동일한 근거).
             t_phase_start = time.time()
-            exists_checked = {}
-            stale_keys = []
+            outer_path_of = {}
+            unique_outer_paths = set()
             for cache_key in self.file_cache:
                 outer_path = cache_key.split('!', 1)[0] if '!' in cache_key else cache_key
-                if outer_path not in exists_checked:
-                    exists_checked[outer_path] = Path(outer_path).exists()
-                if not exists_checked[outer_path]:
-                    stale_keys.append(cache_key)
+                outer_path_of[cache_key] = outer_path
+                unique_outer_paths.add(outer_path)
+
+            with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
+                exists_map = dict(pool.map(
+                    lambda p: (p, Path(p).exists()), unique_outer_paths
+                ))
+
+            stale_keys = [key for key, outer in outer_path_of.items() if not exists_map[outer]]
             if stale_keys:
                 for key in stale_keys:
                     del self.file_cache[key]
