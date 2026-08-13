@@ -17,6 +17,10 @@ import sqlite3
 import threading
 import multiprocessing
 import xml.etree.ElementTree as ET
+try:
+    import winreg  # 탐색기 우클릭 메뉴 등록(Windows 전용)
+except ImportError:
+    winreg = None
 from datetime import datetime
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
@@ -2169,6 +2173,13 @@ class FSearchGUI(QMainWindow):
         self.export_excel_btn.setMaximumHeight(25)
         options2_layout.addWidget(self.export_excel_btn)
 
+        if sys.platform == 'win32' and winreg is not None:
+            self.context_menu_btn = QPushButton()
+            self.context_menu_btn.clicked.connect(self.toggle_context_menu_registration)
+            self.context_menu_btn.setMaximumHeight(25)
+            self._update_context_menu_btn_text()
+            options2_layout.addWidget(self.context_menu_btn)
+
         layout.addWidget(options2_container)
 
         # ===== 진행바 =====
@@ -3432,6 +3443,30 @@ class FSearchGUI(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "엑셀 내보내기 오류", f"저장 중 오류가 발생했습니다:\n{e}")
 
+    def _update_context_menu_btn_text(self):
+        if is_context_menu_registered():
+            self.context_menu_btn.setText("📂 탐색기 메뉴에서 제거")
+        else:
+            self.context_menu_btn.setText("📂 탐색기 메뉴에 추가")
+
+    def toggle_context_menu_registration(self):
+        """탐색기에서 폴더를 우클릭했을 때 'fsearch로 이 폴더 검색'이 뜨도록 등록하거나
+        제거한다. 현재 사용자 범위(HKEY_CURRENT_USER)만 건드려 관리자 권한이 필요 없다."""
+        try:
+            if is_context_menu_registered():
+                unregister_context_menu()
+                QMessageBox.information(self, "탐색기 메뉴", "우클릭 메뉴에서 제거했습니다.")
+            else:
+                register_context_menu()
+                QMessageBox.information(
+                    self, "탐색기 메뉴",
+                    "우클릭 메뉴에 추가했습니다.\n"
+                    "탐색기에서 폴더나 폴더 안 빈 공간을 우클릭해 확인해보세요."
+                )
+        except OSError as e:
+            QMessageBox.critical(self, "탐색기 메뉴 오류", f"처리 중 오류가 발생했습니다:\n{e}")
+        self._update_context_menu_btn_text()
+
     def update_excluded_files(self, excluded_files):
         """제외된 파일 목록 업데이트"""
         self.excluded_files = excluded_files
@@ -3660,9 +3695,67 @@ class FSearchGUI(QMainWindow):
                 self.table.setItem(current_row_count, 4, match_count_item)
 
 
+# 탐색기 우클릭 메뉴에 등록할 키 이름. HKEY_CURRENT_USER 아래에만 쓰므로
+# 관리자 권한이 필요 없고(현재 사용자에게만 적용), 제거도 같은 권한으로 가능하다.
+CONTEXT_MENU_KEY_NAME = "fsearch"
+CONTEXT_MENU_LOCATIONS = [
+    (r"Software\Classes\Directory\shell", '"%1"'),             # 폴더 자체를 우클릭
+    (r"Software\Classes\Directory\Background\shell", '"%V"'),  # 폴더 안 빈 공간을 우클릭
+]
+
+
+def _context_menu_command() -> str:
+    """탐색기 메뉴에 등록할 실행 명령. PyInstaller로 빌드된 exe에서는 sys.executable이
+    fsearch.exe 자신이지만, python fsearch_gui.py로 실행 중일 때는 python.exe에
+    이 스크립트 경로를 붙여야 한다."""
+    if getattr(sys, 'frozen', False):
+        return f'"{sys.executable}"'
+    return f'"{sys.executable}" "{os.path.abspath(__file__)}"'
+
+
+def is_context_menu_registered() -> bool:
+    if winreg is None:
+        return False
+    base, _ = CONTEXT_MENU_LOCATIONS[0]
+    try:
+        winreg.OpenKey(winreg.HKEY_CURRENT_USER, f"{base}\\{CONTEXT_MENU_KEY_NAME}")
+        return True
+    except FileNotFoundError:
+        return False
+
+
+def register_context_menu():
+    """탐색기에서 폴더(또는 폴더 안 빈 공간)를 우클릭하면 'fsearch로 이 폴더 검색'이
+    뜨도록 등록한다. 폴더 경로가 %1/%V로 채워져 fsearch가 그 경로로 바로 열린다."""
+    command = _context_menu_command()
+    for base, placeholder in CONTEXT_MENU_LOCATIONS:
+        key_path = f"{base}\\{CONTEXT_MENU_KEY_NAME}"
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path) as key:
+            winreg.SetValueEx(key, "", 0, winreg.REG_SZ, "fsearch로 이 폴더 검색")
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, f"{key_path}\\command") as cmd_key:
+            winreg.SetValueEx(cmd_key, "", 0, winreg.REG_SZ, f"{command} {placeholder}")
+
+
+def unregister_context_menu():
+    """등록된 탐색기 우클릭 메뉴 항목을 제거한다."""
+    for base, _ in CONTEXT_MENU_LOCATIONS:
+        key_path = f"{base}\\{CONTEXT_MENU_KEY_NAME}"
+        try:
+            winreg.DeleteKey(winreg.HKEY_CURRENT_USER, f"{key_path}\\command")
+        except FileNotFoundError:
+            pass
+        try:
+            winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key_path)
+        except FileNotFoundError:
+            pass
+
+
 def main():
     app = QApplication(sys.argv)
     window = FSearchGUI()
+    if len(sys.argv) > 1 and os.path.isdir(sys.argv[1]):
+        # 탐색기 우클릭 메뉴(register_context_menu)로 실행됐을 때 폴더 경로를 전달받는다
+        window.path_input.setCurrentText(sys.argv[1])
     window.show()
     sys.exit(app.exec_())
 
